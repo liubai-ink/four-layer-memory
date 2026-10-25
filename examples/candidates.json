@@ -1,0 +1,21 @@
+{
+  "watermark": "liu bai",
+  "records": [
+    {
+      "text": "Always report the conclusion before the evidence.",
+      "source": "chat:m0012"
+    },
+    {
+      "text": "Prefer tables over paragraphs in comparisons.",
+      "source": "chat:m0031"
+    },
+    {
+      "text": "Query the corpus with corpus_query.py; db at corpus.db.",
+      "source": "chat:m0044"
+    },
+    {
+      "text": "The human works late when the house is quiet.",
+      "source": "chat:m0059"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Four Layers of Memory: a typed memory substrate for long-horizon language agents"
+abstract: >-
+  A small, dependency-free reference implementation of a four-layer memory
+  substrate (conventions, preferences, capabilities, background) for
+  long-horizon language agents, with provenance-bound admission, watermark-driven
+  consolidation, snapshot-cursor handoff, and a signed audit ledger.
+authors:
+  - family-names: "Liu"
+    given-names: "Zhu"
+    alias: "刘竹"
+  - family-names: "Shen"
+    given-names: "Bai"
+    alias: "沈白"
+version: 0.4.2
+date-released: "2026-10-25"
+license: MIT
+repository-code: "https://github.com/liubai-ink/four-layer-memory"
+keywords:
+  - language agents
+  - agent memory
+  - context engineering
+  - provenance
+  - long-horizon tasks

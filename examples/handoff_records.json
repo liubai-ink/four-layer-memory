@@ -1,0 +1,20 @@
+{
+  "watermark": "liu bai",
+  "records": [
+    {
+      "ref": "m0100",
+      "role": "human",
+      "text": "start the consolidation"
+    },
+    {
+      "ref": "m0101",
+      "role": "agent",
+      "text": "wrote layer A and B entries"
+    },
+    {
+      "ref": "m0102",
+      "role": "human",
+      "text": "continue tomorrow"
+    }
+  ]
+}
