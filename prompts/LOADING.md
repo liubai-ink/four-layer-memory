@@ -27,17 +27,18 @@ irrelevant:
 
 ## When to write
 
-| Signal | Where | Authority |
-|---|---|---|
-| The user states a standing rule ("always / never / from now on") and you can quote them | A | `user-explicit` + `quote` |
-| You infer a habit from repeated behaviour | B | `user-implied` + `paraphrase` |
-| A stable tool, path or procedure becomes worth reusing | C | `observed` + `summary` |
-| An ordinary fact that may matter later | D | `inferred` + `summary` |
+| Signal | Where | Authority | Evidence |
+|---|---|---|---|
+| The user states a standing rule ("always / never / from now on") and you can quote them | A | `user-explicit` | `quote` |
+| The user states a preference, or you infer one from repeated behaviour | B | `user-explicit` / `user-implied` | `quote` / `paraphrase` |
+| A stable tool, path or procedure becomes worth reusing | C | `observed` | `summary` |
+| An ordinary fact that may matter later | D | `observed` | `summary` |
+| Anything inferred by the model, anything about health, identity, money, or anything whose authority you cannot state | quarantine | — | — |
 
-Layer A is the only layer that is *earned*: without explicit authority and a
-quotable source, the write is quarantined instead of stored. A human resolves
-quarantine by accepting or rejecting the entry; accepted entries carry an
-approval tag in the ledger.
+Layer A is the only layer that is *earned*: the write must carry an immutable
+source-event id and a human approval record. Everything else is quarantined with a
+one-time approval token; a human resolves it by accepting (with the token) or
+rejecting the entry, and accepted entries carry the approval in the ledger.
 
 Write the smallest text that still makes sense a month later, keep the source
 reference (message id, file, URL), and never copy the conversation in.
@@ -45,14 +46,26 @@ reference (message id, file, URL), and never copy the conversation in.
 ## When to consolidate
 
 Consolidation is the act of folding new material into the layers and recording a
-checkpoint. Trigger it by *measured* context usage, not by feel:
+checkpoint. Trigger it by *measured* context usage, not by feel. The policy is a
+five-state machine, and the numbers below are the implemented defaults (a host may
+calibrate them, but it must then say so):
 
-- `usage_ratio >= 0.40` → plan a consolidation at the next natural break;
-- `usage_ratio >= 0.45` → consolidate before the host starts folding the context;
-- `usage_ratio >= 0.95` → emergency: consolidate now, and tell the user.
+| State | Threshold | What the host does |
+|---|---|---|
+| `normal` | < 0.30 | nothing |
+| `watch` | ≥ 0.30 | sample every third turn |
+| `act` | ≥ 0.35 | check every turn, plan a break |
+| `forced` | ≥ 0.38 | consolidate at the next break; respect the cooldown |
+| `collapse` | ≥ 0.45 | fold is permitted **only after** a consolidation and only if at least one entry is pending |
 
-After consolidating, write a **handoff** state: the reference of the last message
-you folded. A new session resumes from that cursor, not from a transcript.
+A cooldown (eight entries, default) prevents re-consolidating the same material:
+after a consolidation, the state returns to `watch` only when the cooldown has
+elapsed. At `usage_ratio >= 0.95` the host stops accepting new work and finishes
+with an explicit short answer.
+
+After consolidating, write the **handoff** state: the reference of the last message
+you folded, in the source-event log's coordinate system. There is exactly one
+cursor; a new session resumes from it, not from a transcript.
 
 ## What not to do
 

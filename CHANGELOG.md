@@ -2,6 +2,21 @@
 
 # Changelog
 
+## 0.6.1 - 2026-10-25
+
+- Align `prompts/LOADING.md` with the implemented policy: five-state watermark
+  (0.30 / 0.35 / 0.38 / 0.45 / 0.95), fold requires an explicit permission and at
+  least one pending entry, cooldown of eight entries, single cursor.
+- Loading table now states that inferred text and sensitive categories go to
+  quarantine in every layer, and that layer A requires an immutable source event
+  plus a human approval record.
+- Package a review bundle carrying the anonymous manuscript (v0.4) next to this
+  release so readers can compare document and artifact.
+- Re-run the reviewer's fourteen probes against this package: 14/14 are now
+  blocked (results in `_review/after_v061.json`). The regression suite pins
+  each one in `tests/test_reviewer_probes.py`; `scripts/verify_release.py`
+  reports 37 files with no problems and `python -m unittest` passes 60 tests.
+
 ## 0.6.0 - 2026-10-25
 
 Trust-boundary release.  An external review reproduced fourteen counterexamples
