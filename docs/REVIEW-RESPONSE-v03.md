@@ -1,3 +1,6 @@
+﻿<!-- liu bai (留白) - a project by Liu Yinuo
+     Four-Layer Agent Memory: conventions, preferences, capabilities, background.
+     Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking. -->
 # Response to the v0.3 review (14 counterexamples)
 
 We accept the finding that motivated this round: the v0.3 text described a
@@ -83,3 +86,4 @@ paper's experiment section now compares them rather than comparing layer counts.
 - `verify_release.py`: 36 files, no problems.
 - Release bundle: `four-layer-memory-v0.6.0.zip` (67,384 B, sha256
   `ea6729ea343b514c9189052bef720846b7b295a798ae159c3053f19edd290f70`).
+
