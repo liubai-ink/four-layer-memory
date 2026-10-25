@@ -2,6 +2,18 @@
 
 # Changelog
 
+## 0.5.0 - 2026-10-25
+
+- New: our-layer-memory-mcp, a dependency-free MCP server over stdio. Eight
+  tools (memory_load, memory_add, memory_consolidate, memory_status,
+  memory_audit, memory_quarantine, memory_review, memory_handoff), so any
+  MCP-capable host can use the store without host-side code.
+- New: docs/INTEGRATING.md (CLI, Python API, MCP configuration, the host-side
+  contract) and prompts/LOADING.md (the loading/writing/consolidation contract).
+- New: console scripts our-layer-memory and our-layer-memory-mcp.
+- Tests: 	ests/test_mcp.py spawns the server as a real subprocess and checks
+  initialize, tool listing, admission, quarantine and audit; suite is 46 tests.
+
 ## 0.4.2 - 2026-10-25
 
 - Fix (breaking for new stores): init and keygen crashed with NameError: signing;

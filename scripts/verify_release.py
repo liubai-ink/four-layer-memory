@@ -32,7 +32,8 @@ USERPATH = re.compile("[A-Za-z]:" + _BS + _BS + "Users" + _BS + _BS + "|/home/[^
 def main() -> int:
     problems: list[str] = []
     files = [p for p in ROOT.rglob("*") if p.is_file() and p.suffix not in SKIP_SUFFIX
-             and "__pycache__" not in p.parts and ".git" not in p.parts]
+             and "__pycache__" not in p.parts and ".git" not in p.parts
+             and not any(part.endswith(".egg-info") for part in p.parts)]
     for p in files:
         rel = p.relative_to(ROOT).as_posix()
         text = p.read_text(encoding="utf-8", errors="ignore")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "four-layer-memory"
-version = "0.4.2"
+version = "0.5.0"
 description = "Four-layer memory for long-horizon LLM agents: conventions, preferences, capabilities, background."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,3 +16,7 @@ keywords = ["llm-agents", "memory", "context-management", "personalization"]
 
 [tool.setuptools]
 packages = ["four_layer_memory"]
+
+[project.scripts]
+four-layer-memory = "four_layer_memory.cli:main"
+four-layer-memory-mcp = "four_layer_memory.mcp:main"

@@ -7,7 +7,35 @@
 **Authors**: Liu Zhu (刘竹) and Shen Bai (沈白) — together **liu bai** (留白).
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
 
+## Download and use in five minutes
+
+`ash
+git clone https://github.com/liubai-ink/four-layer-memory && cd four-layer-memory
+pip install -e .
+four-layer-memory --root ./memory init
+four-layer-memory --root ./memory add A "Always answer in Chinese." --source chat:1 --authority user-explicit --evidence quote
+four-layer-memory --root ./memory audit        # {"ok": true, ...}
+`
+
+Then pick how your agent talks to it:
+
+- **MCP** (Claude Desktop, Cursor, any MCP client): run our-layer-memory-mcp
+  --root ./memory and paste the JSON from [docs/INTEGRATING.md](docs/INTEGRATING.md).
+  The model gets eight tools (memory_load, memory_add, memory_consolidate,
+  memory_status, memory_audit, memory_quarantine, memory_review,
+  memory_handoff) and needs no code changes on the host side.
+- **Python**: rom four_layer_memory import MemoryStore, Entry — see
+  [docs/INTEGRATING.md](docs/INTEGRATING.md) §2.
+- **CLI**: for poking at a store by hand.
+
+The host still owns two decisions: *what goes into the prompt* (load A and B
+every turn; C on demand; D through the cursor) and *when to consolidate*.
+[prompts/LOADING.md](prompts/LOADING.md) is the written contract to paste into
+your agent's instructions.
+
 ## Why four layers
+
+
 
 Most "agent memory" systems conflate three different problems: *what rules we
 work under*, *how this person wants things done*, *what the agent can do*, and
@@ -44,7 +72,7 @@ separates four axes that the label alone used to conflate:
 Layer **A** admits only user-explicit + quote. Everything else lands in
 quarantine/pending.md with a reason and a ledger record; nothing is dropped
 silently. Revocation is by source event: 
-evoke <event> marks entries that
+revoke <event> marks entries that
 came from that event, including entries derived from it.
 
 ## Quick start
