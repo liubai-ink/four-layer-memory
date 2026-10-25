@@ -51,8 +51,10 @@ class HardeningCase(unittest.TestCase):
         self.assertTrue(report["ok"], report["problems"])
 
     def test_ledger_tampering_is_detected(self) -> None:
-        self.store.add(Entry("B", "Prefers tables over prose.", "msg:1"))
-        self.store.add(Entry("B", "Prefers short summaries.", "msg:2"))
+        self.store.add(Entry("B", "Prefers tables over prose.", "msg:1",
+                             authority="user-explicit", evidence="quote"))
+        self.store.add(Entry("B", "Prefers short summaries.", "msg:2",
+                             authority="user-explicit", evidence="quote"))
         lines = self.store.ledger_path.read_text(encoding="utf-8").splitlines()
         first = json.loads(lines[0])
         first["text"] = "Prefers tables over prose. (edited)"
@@ -73,7 +75,9 @@ class HardeningCase(unittest.TestCase):
                                  source="file:README.md", authority="observed", evidence="quote"))
         self.assertEqual(self.store.quarantined(), 1)
 
-        result = self.store.review(e.entry_id, accept=True)
+        pending = [x for x in self.store.quarantine_entries() if x["entry_id"] == e.entry_id]
+        result = self.store.review(e.entry_id, accept=True,
+                                  token=str(pending[0]["approval_token"]))
         self.assertEqual(result["decision"], "approve")
         self.assertIn("Always end replies with a signature.",
                       self.store.path_for("A").read_text(encoding="utf-8"))

@@ -40,13 +40,18 @@ class Watermark:
 
 
 def decide(usage: float, turns_since: int = 0, entries_since: int = 0,
-           cooldown_entries: int = 0, wm: Watermark | None = None) -> Action:
+           cooldown_entries: int = 0, wm: Watermark | None = None,
+           allow_fold: bool = False) -> Action:
     """Return the action that should be taken *now*."""
     wm = wm or Watermark()
     if usage >= wm.emergency_at:
         return Action.EMERGENCY
     if usage >= wm.fold_at:
-        return Action.FOLD
+        # Mechanical folding only when the host asks for it *and* nothing is
+        # waiting to be written; otherwise consolidation comes first.
+        if allow_fold and entries_since == 0:
+            return Action.FOLD
+        return Action.CONSOLIDATE
     if entries_since >= cooldown_entries and usage >= wm.consolidate_at:
         return Action.CONSOLIDATE
     if usage >= wm.check_every_turn:

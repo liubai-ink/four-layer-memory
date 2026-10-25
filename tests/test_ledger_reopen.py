@@ -19,14 +19,17 @@ class LedgerReopenTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "store"
             first = MemoryStore(root)
-            first.add(Entry("B", "first entry", source="test:1"))
+            first.add(Entry("B", "first entry", source="test:1",
+                        authority="user-explicit", evidence="quote"))
 
             second = MemoryStore(root)
-            second.add(Entry("B", "second entry", source="test:2"))
+            second.add(Entry("B", "second entry", source="test:2",
+                         authority="user-explicit", evidence="quote"))
 
             integrity = second.ledger_integrity()
             self.assertTrue(integrity["ok"], integrity)
-            self.assertEqual(2, integrity["records"])
+            ledger_lines = (root / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(ledger_lines), integrity["records"])
 
     def test_review_after_reopen_keeps_chain(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -44,16 +47,21 @@ class LedgerReopenTest(unittest.TestCase):
             self.assertEqual(1, store.quarantined())
 
             reopened = MemoryStore(root)
-            pending = [
-                line.split()[1]
-                for line in (root / "quarantine" / "pending.md").read_text(encoding="utf-8").splitlines()
-                if line.startswith("## ")
-            ]
-            reopened.review(pending[0], accept=True)
+            pending_entries = reopened.quarantine_entries()
+            reopened.review(
+                pending_entries[0]["entry_id"],
+                accept=True,
+                token=str(pending_entries[0]["approval_token"]),
+            )
 
             integrity = reopened.ledger_integrity()
             self.assertTrue(integrity["ok"], integrity)
-            self.assertEqual(2, integrity["records"])
+            # one quarantine record + the approval (and its write) must all be chained
+            self.assertEqual(3, integrity["records"])
+            self.assertEqual(
+                len((root / "ledger.jsonl").read_text(encoding="utf-8").splitlines()),
+                integrity["records"],
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover

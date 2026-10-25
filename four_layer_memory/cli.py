@@ -49,6 +49,7 @@ def cmd_add(args) -> int:
             evidence=args.evidence,
             lifecycle=args.lifecycle,
             source_event_id=args.source_event,
+            approved=args.approved,
         )
     )
     pending = [x for x in store.quarantine_entries() if x.get("text") == e.text]
@@ -96,7 +97,8 @@ def cmd_handoff(args) -> int:
 def cmd_quarantine(args) -> int:
     store = MemoryStore(args.root)
     if args.accept or args.reject:
-        result = store.review(args.accept or args.reject, accept=bool(args.accept))
+        result = store.review(args.accept or args.reject, accept=bool(args.accept),
+                              token=args.token)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     if args.list:
@@ -174,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--lifecycle", default="standing",
                    choices=["standing", "project-scoped", "expiring"])
     a.add_argument("--source-event", default="")
+    a.add_argument("--approved", action="store_true",
+                   help="record that a human approved this write (required for layer A)")
 
     c = sub.add_parser("consolidate")
     c.add_argument("--anchor", required=True)
@@ -200,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--accept", default="")
     q.add_argument("--reject", default="")
     q.add_argument("--list", action="store_true")
+    q.add_argument("--token", default="",
+                   help="approval token shown when the entry was quarantined")
 
     kg = sub.add_parser("keygen")
     kg.add_argument("--alg", choices=["hmac-sha256", "ed25519"], default="hmac-sha256")

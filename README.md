@@ -63,6 +63,23 @@ Two invariants make the design work (both refined in v0.2):
    last consolidation ended* and *how full the context is*; the tail lives in
    files that are read on demand.
 
+## Trust boundary (v0.6)
+
+The store treats *who authorised a write* as part of the write:
+
+- layer A accepts only explicit user conventions, quoted, with a source event id
+  and a recorded approval; everything else is quarantined with a one-time token;
+- inferred text never reaches a loadable layer, and text that looks medical,
+  identifying or financial is quarantined in every layer;
+- the ledger is written before the layer file, followed by a `bind` record that
+  hashes the bytes actually on disk, so tampering and truncation are detectable;
+- revocation is state, not just a log line: the loader filters revoked entries;
+- there is a single checkpoint (no second `handoff.json`), and the ledger head is
+  signed, so a third party can verify an exported bundle with the public key.
+
+`tests/test_reviewer_probes.py` pins the fourteen external counterexamples as
+regression tests.
+
 ## Admission: authority is not truth
 
 A memory is not admitted because it sounds like a rule. Write-time admission

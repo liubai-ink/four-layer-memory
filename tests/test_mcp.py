@@ -78,7 +78,9 @@ class McpServerTest(unittest.TestCase):
                          "memory_status", "memory_audit"} <= names)
 
     def test_add_load_and_quarantine(self) -> None:
-        payload, is_error = self.tool("memory_add", layer="B", text="Tables over paragraphs.", source="mcp:1")
+        payload, is_error = self.tool("memory_add", layer="B", text="Tables over paragraphs.",
+                                      source="mcp:1", authority="user-explicit",
+                                      evidence="quote")
         self.assertFalse(is_error)
         self.assertTrue(payload["accepted"])
 
@@ -86,17 +88,18 @@ class McpServerTest(unittest.TestCase):
         payload, _ = self.tool("memory_add", layer="A", text="Always answer in Chinese.", source="mcp:2")
         self.assertTrue(payload["quarantined"])
 
-        # layer A earned with explicit authority is stored directly
+        # layer A still requires a human approval token; the writer cannot self-approve
         payload, _ = self.tool("memory_add", layer="A", text="Keep provenance.", source="mcp:3",
                                authority="user-explicit", evidence="quote")
-        self.assertTrue(payload["accepted"])
+        self.assertTrue(payload["quarantined"])
+        self.assertFalse(payload["accepted"])
 
         loaded, _ = self.tool("memory_load", layers=["A", "B"])
         self.assertIn("Tables over paragraphs.", loaded["text"])
-        self.assertIn("Keep provenance.", loaded["text"])
+        self.assertNotIn("Keep provenance.", loaded["text"])
 
         pending, _ = self.tool("memory_quarantine")
-        self.assertEqual(1, pending["count"])
+        self.assertEqual(2, pending["count"])
 
         audit, _ = self.tool("memory_audit")
         self.assertTrue(audit["ok"], audit)

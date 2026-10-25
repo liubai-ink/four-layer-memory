@@ -2,6 +2,53 @@
 
 # Changelog
 
+## 0.6.0 - 2026-10-25
+
+Trust-boundary release.  An external review reproduced fourteen counterexamples
+against 0.5.0; all fourteen are now closed, and each one is pinned as a
+regression test in `tests/test_reviewer_probes.py`.
+
+### Admission is a runtime decision, not a caller claim
+- `admission.decide()` takes the runtime's stamp: layer, authority, evidence,
+  `source_event_id` and an explicit `approved` flag.
+- Layer A accepts only `user-explicit` + `quote` **with** a source event id and
+  an approval record; other writes to A are quarantined.
+- Layer B accepts explicit or implied user preferences with quoted or paraphrased
+  evidence; inferred text is quarantined instead of silently loaded.
+- Text that looks medical, identifying or financial is quarantined in **every**
+  layer, including C.
+- Quarantine returns a one-time `approval_token`; promotion requires that token,
+  and the approving human is recorded.
+
+### Writes, recovery and revocation
+- The ledger record is written before the layer file, and a follow-up `bind`
+  record carries the sha256 of the bytes that actually landed on disk.
+- `add()` is idempotent by entry id; a crash between ledger and layer leaves a
+  recoverable state rather than an unlogged entry.
+- `review()` preserves `source_event_id` / `derived_from`, so promotion cannot
+  detach an entry from the event that authorised it.
+- `revoke(source_event)` records the revocation in state, the loader filters
+  revoked entries, and entries derived from the revoked event are included.
+
+### One checkpoint, one chain
+- `handoff.json` is gone: the cursor lives in `state.json` and `Handoff` is a
+  view over it, so a crash cannot leave two disagreeing checkpoints.
+- The ledger records its own length in state; a truncated suffix is reported as
+  truncation instead of passing as a valid prefix.
+- The chain head is signed (HMAC-SHA256 by default, Ed25519 optional) and a
+  third party can verify with the public key alone.
+
+### Replayable audit
+- `audit` reports four independent checks: structural, content, authorization and
+  ledger.  Authorization replays the ledger and compares each layer file against
+  its `bind` hash, so text edited outside the store is caught.
+
+### Compatibility note
+Two of the reviewer's probes were written before authority became mandatory.  In
+the harness that replays them, the two writes that are supposed to land in a
+layer are stamped with the authority an interactive runtime would record.  No
+product behaviour was relaxed: the probes' own assertions run unchanged.
+
 ## 0.5.0 - 2026-10-25
 
 - New: our-layer-memory-mcp, a dependency-free MCP server over stdio. Eight

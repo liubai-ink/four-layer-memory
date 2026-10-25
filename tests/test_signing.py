@@ -69,7 +69,8 @@ class SigningCase(unittest.TestCase):
     def test_signed_ledger_is_intact(self) -> None:
         signing.keygen(self.tmp)
         store = MemoryStore(self.tmp)
-        store.add(Entry("B", "Prefers short summaries.", "msg:1"))
+        store.add(Entry("B", "Prefers short summaries.", "msg:1",
+                    authority="user-explicit", evidence="quote"))
         store.add(Entry("D", "The corpus has 388 chapters.", "msg:2"))
         integrity = store.ledger_integrity()
         self.assertTrue(integrity["ok"])
@@ -79,7 +80,8 @@ class SigningCase(unittest.TestCase):
     def test_recomputed_chain_without_signature_is_rejected(self) -> None:
         signing.keygen(self.tmp)
         store = MemoryStore(self.tmp)
-        store.add(Entry("B", "Prefers tables.", "msg:1"))
+        store.add(Entry("B", "Prefers tables.", "msg:1",
+                    authority="user-explicit", evidence="quote"))
         self._forge_chain(store, mutate_text=True)
 
         integrity = store.ledger_integrity()
@@ -98,7 +100,8 @@ class SigningCase(unittest.TestCase):
         self.assertEqual(len(signing.public_key_hex(self.tmp)), 64)
 
         store = MemoryStore(self.tmp)
-        store.add(Entry("A", "Always cite the source event.", "msg:3", authority="user-explicit",
+        store.add(Entry("A", "Always cite the source event.", "msg:3", source_event_id="evt-1", approved=True,
+                    authority="user-explicit",
                         evidence="quote"))
         self.assertTrue(store.ledger_integrity()["ok"])
         self.assertEqual(store.ledger_integrity()["signed"], signing.ED25519)

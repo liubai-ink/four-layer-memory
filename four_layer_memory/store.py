@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import time
@@ -66,6 +67,7 @@ class Entry:
     derived_from: list[str] = field(default_factory=list)
     entry_id: str = ""
     revoked_at: str = ""
+    approved: bool = False
 
     def validate(self) -> None:
         s = spec(self.layer)
@@ -101,6 +103,8 @@ class Entry:
             "source_event_id": self.source_event_id,
             "derived_from": list(self.derived_from),
             "revoked_at": self.revoked_at,
+            "approved": bool(self.approved),
+            "text_sha256": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
         }
 
 
@@ -108,10 +112,12 @@ class Entry:
 class State:
     session_id: str = "unnamed"
     last_anchor_ref: str = ""
+    ledger_records: int = 0
     consolidated_at: str = ""
     usage_at_consolidation: float = 0.0
     layer_counts: dict[str, int] = field(default_factory=dict)
     cooldown_until_entries: int = 0
+    revoked: list[str] = field(default_factory=list)
     watermark: str = WATERMARK
 
     def to_json(self) -> str:
@@ -158,6 +164,7 @@ class MemoryStore:
         self.quarantine_dir.mkdir(exist_ok=True)
         self.quarantine_path = self.quarantine_dir / "pending.md"
         self.resolved_path = self.quarantine_dir / "resolved.jsonl"
+        self._pending_path = self.quarantine_dir / "pending.jsonl"
         if not self.quarantine_path.exists():
             self.quarantine_path.write_text(
                 f"# quarantine\n\n<!-- {WATERMARK} -->\n\n", encoding="utf-8"
@@ -256,6 +263,53 @@ class MemoryStore:
             "watermark": WATERMARK,
         }
 
+    def _reload(self) -> None:
+        """Re-read state and the ledger tail so two handles cannot fork the chain."""
+        if self.state_path.exists():
+            self.state = State(**json.loads(self.state_path.read_text(encoding="utf-8")))
+        self._last_hash = self._ledger_tail_hash()
+        self._ledger_count = len(self.ledger_records())
+
+    def _find_written(self, entry_id: str) -> Entry | None:
+        """Return the entry already on disk with this id, if any (idempotent add)."""
+        if not entry_id:
+            return None
+        needle = f"`id: {entry_id}`"
+        for layer in Layer:
+            p = self.path_for(layer)
+            if not p.exists():
+                continue
+            for block in p.read_text(encoding="utf-8").split("\n- ")[1:]:
+                if needle in block:
+                    first = block.splitlines()[0].lstrip("- ")
+                    if "  \n  `source:" in block:
+                        first = block.split("  \n  `source:")[0].lstrip("- ")
+                    return Entry(layer=layer.value, text=first.strip(),
+                                 source="recovered", entry_id=entry_id)
+        return None
+
+    def revoked_ids(self) -> set[str]:
+        return set(self.state.revoked or [])
+
+    def _bullet(self, entry: Entry) -> str:
+        bullet = f"- {entry.text}"
+        if entry.source:
+            bullet += f"  \n  `source: {entry.source}` `at: {entry.at}`"
+        bullet += (
+            f"  `authority: {entry.authority}` `evidence: {entry.evidence}` "
+            f"`lifecycle: {entry.lifecycle}` `id: {entry.entry_id}`"
+        )
+        if entry.tags:
+            bullet += f"  `tags: {','.join(entry.tags)}`"
+        return bullet
+
+    def _layer_text_with(self, entry: Entry) -> str:
+        path = self.path_for(entry.layer)
+        current = path.read_text(encoding="utf-8") if path.exists() else ""
+        if current and not current.endswith("\n"):
+            current += "\n"
+        return current + self._bullet(entry) + "\n"
+
     # -- ledger ------------------------------------------------------------
     def _ledger_tail_hash(self) -> str:
         """Hash of the last committed ledger record (empty for a fresh store)."""
@@ -278,6 +332,8 @@ class MemoryStore:
         if signing.has_key(self.root):
             body = signing.sign(self.root, body)
         self._last_hash = body["hash"]
+        self._ledger_count = getattr(self, "_ledger_count", 0) + 1
+        self.state.ledger_records = self._ledger_count
         with self.ledger_path.open("a", encoding="utf-8") as fh:
             fh.write(_canonical(body) + "\n")
             fh.flush()
@@ -300,7 +356,12 @@ class MemoryStore:
     def ledger_integrity(self) -> dict:
         """Recompute the hash chain; report the first broken link."""
         prev = ""
-        for index, rec in enumerate(self.ledger_records()):
+        records = self.ledger_records()
+        if self.state.ledger_records and len(records) < self.state.ledger_records:
+            return {"ok": False, "at": len(records), "records": len(records),
+                    "signed": signing.algorithm(self.root) or "unsigned",
+                    "reason": f"ledger truncated: state records {self.state.ledger_records}, found {len(records)}"}
+        for index, rec in enumerate(records):
             claimed = rec.get("hash")
             body = {k: v for k, v in rec.items() if k not in ("hash", "sig", "sig_alg")}
             if body.get("prev") != prev:
@@ -324,34 +385,47 @@ class MemoryStore:
     def _append_locked(self, entry: Entry) -> None:
         path = self.path_for(entry.layer)
         self._backup(path)
-        bullet = f"- {entry.text}"
-        if entry.source:
-            bullet += f"  \n  `source: {entry.source}` `at: {entry.at}`"
-        bullet += (
-            f"  `authority: {entry.authority}` `evidence: {entry.evidence}` "
-            f"`lifecycle: {entry.lifecycle}` `id: {entry.entry_id}`"
-        )
-        if entry.tags:
-            bullet += f"  `tags: {','.join(entry.tags)}`"
-        current = path.read_text(encoding="utf-8") if path.exists() else ""
-        if not current.endswith("\n"):
-            current += "\n"
-        self._atomic_write(path, current + bullet + "\n")
+        self._atomic_write(path, self._layer_text_with(entry))
         key = spec(entry.layer).name
         self.state.layer_counts[key] = self.state.layer_counts.get(key, 0) + 1
 
     def add(self, entry: Entry) -> Entry:
-        """Validate, then route to the claimed layer or to quarantine."""
+        """Validate, decide, then commit ledger -> layer -> state under one lock.
+
+        The ledger record is written *before* the layer file and carries the hash
+        of the file the write should produce, so a crash between the two is
+        detectable by ``audit`` instead of silently leaving memory without logs.
+        """
         with self._lock():
+            self._reload()
             entry.validate()
             entry.at = entry.at or now_iso()
-            decision = admission.decide(entry.layer, entry.authority, entry.evidence)
+            existing = self._find_written(entry.entry_id)
+            if existing is not None:
+                return existing
+            decision = admission.decide(
+                entry.layer, entry.authority, entry.evidence,
+                source_event_id=entry.source_event_id,
+                approved=entry.approved,
+                text=entry.text,
+            )
             if not decision.accept:
                 self._write_quarantine(entry, decision.reason)
+                self._save_state()
                 return entry
+            self._ledger({
+                "event": "write",
+                **entry.to_record(),
+                "reason": decision.reason,
+            })
             self._append_locked(entry)
+            self._ledger({
+                "event": "bind",
+                "entry_id": entry.entry_id,
+                "layer": entry.layer,
+                "layer_sha256": _sha(self.path_for(entry.layer).read_text(encoding="utf-8")),
+            })
             self._save_state()
-            self._ledger({"event": "write", **entry.to_record(), "reason": decision.reason})
             return entry
 
     def add_many(self, entries: list[Entry]) -> list[Entry]:
@@ -362,31 +436,61 @@ class MemoryStore:
         """
         out = []
         with self._lock():
+            self._reload()
             for entry in entries:
                 entry.validate()
                 entry.at = entry.at or now_iso()
-                decision = admission.decide(entry.layer, entry.authority, entry.evidence)
+                if self._find_written(entry.entry_id) is not None:
+                    out.append(entry)
+                    continue
+                decision = admission.decide(
+                    entry.layer, entry.authority, entry.evidence,
+                    source_event_id=entry.source_event_id,
+                    approved=entry.approved,
+                    text=entry.text,
+                )
                 if not decision.accept:
                     self._write_quarantine(entry, decision.reason)
                 else:
+                    self._ledger({
+                        "event": "write", **entry.to_record(),
+                        "reason": decision.reason,
+                    })
                     self._append_locked(entry)
-                    self._ledger({"event": "write", **entry.to_record(), "reason": decision.reason})
+                    # Bind the bytes that are now on disk, not a prediction.
+                    self._ledger({
+                        "event": "bind",
+                        "entry_id": entry.entry_id,
+                        "layer": entry.layer,
+                        "layer_sha256": _sha(self.path_for(entry.layer).read_text(encoding="utf-8")),
+                    })
                 out.append(entry)
             self._save_state()
         return out
 
     def _write_quarantine(self, entry: Entry, reason: str) -> None:
+        token = secrets.token_hex(3).upper()
+        record = {
+            **entry.to_record(),
+            "reason": reason,
+            "approval_token": token,
+            "quarantined_at": now_iso(),
+        }
         block = [
             f"## {entry.entry_id}",
             f"- claimed layer: `{entry.layer}`",
             f"- authority: `{entry.authority}` / evidence: `{entry.evidence}` / lifecycle: `{entry.lifecycle}`",
             f"- source: `{entry.source}` at `{entry.at}`",
+            f"- source event: `{entry.source_event_id}`",
             f"- rejected: {reason}",
+            f"- approval token: `{token}`",
             f"- text: {entry.text}",
             "",
         ]
         current = self.quarantine_path.read_text(encoding="utf-8")
         self._atomic_write(self.quarantine_path, current + "\n".join(block))
+        with self._pending_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + chr(10))
         self._ledger({"event": "quarantine", **entry.to_record(), "reason": reason})
 
     def _resolved_ids(self) -> set[str]:
@@ -409,6 +513,20 @@ class MemoryStore:
 
     def quarantine_entries(self, include_resolved: bool = False) -> list[dict]:
         """Entries in the quarantine file; resolved ones are hidden by default."""
+        if self._pending_path.exists():
+            resolved = self._resolved_ids()
+            out = []
+            for line in self._pending_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:  # pragma: no cover
+                    continue
+                if include_resolved or rec.get("entry_id") not in resolved:
+                    out.append(rec)
+            return out
         text = self.quarantine_path.read_text(encoding="utf-8")
         blocks = re.split(r"(?m)^## ", text)[1:]
         out = []
@@ -431,7 +549,7 @@ class MemoryStore:
                 out.append(record)
         return out
 
-    def review(self, entry_id: str, accept: bool) -> dict:
+    def review(self, entry_id: str, accept: bool, token: str = "", approver: str = "human") -> dict:
         """Human decision on a quarantined claim.
 
         Accepting is the only way a claim crosses into layer A without having
@@ -439,25 +557,40 @@ class MemoryStore:
         the entry is written as ``user-explicit`` + ``quote`` with an
         ``approved:<reviewer>`` tag.
         """
-        if entry_id in self._resolved_ids():
-            raise StoreError(f"already resolved: {entry_id}")
         match = [e for e in self.quarantine_entries(include_resolved=True) if e["entry_id"] == entry_id]
         if not match:
             raise StoreError(f"no quarantined entry {entry_id}")
         found = match[0]
+        if entry_id in self._resolved_ids():
+            raise StoreError(f"already resolved: {entry_id}")
+        if accept:
+            expected = str(found.get("approval_token") or "")
+            if not token or not expected or token.strip().upper() != expected:
+                raise StoreError("approval token required (and must match the token shown at quarantine time)")
         decision = "approve" if accept else "reject"
         with self._lock():
+            self._reload()
             if accept:
                 entry = Entry(
-                    layer=found["layer"] or "D",
-                    text=found["text"],
-                    source=found["source"] or "quarantine",
-                    at=found["at"] or now_iso(),
-                    tags=["approved"],
+                    layer=str(found.get("layer") or "D"),
+                    text=str(found.get("text") or ""),
+                    source=str(found.get("source") or "quarantine"),
+                    at=str(found.get("at") or now_iso()),
+                    tags=["approved", f"approver:{approver}"],
                     authority="user-explicit",
                     evidence="quote",
+                    lifecycle=str(found.get("lifecycle") or "standing"),
+                    source_event_id=str(found.get("source_event_id") or ""),
+                    derived_from=list(found.get("derived_from") or []),
                     entry_id=entry_id,
+                    approved=True,
                 )
+                entry.validate()
+                self._ledger({
+                    "event": "approve",
+                    **entry.to_record(),
+                    "layer_sha256": _sha(self._layer_text_with(entry)),
+                })
                 self._append_locked(entry)
                 self._save_state()
             with self.resolved_path.open("a", encoding="utf-8") as fh:
@@ -469,14 +602,18 @@ class MemoryStore:
         return {"entry_id": entry_id, "decision": decision, "layer": found["layer"]}
 
     def revoke(self, source_event_id: str) -> dict:
-        """Mark every entry derived from a source event as revoked (ledger record)."""
+        """Revoke every entry derived from a source event, and stop loading them."""
         with self._lock():
-            hits = []
+            self._reload()
+            hits: list[str] = []
             for rec in self.ledger_records():
-                if rec.get("event") != "write":
+                if rec.get("event") not in ("write", "approve"):
                     continue
                 if rec.get("source_event_id") == source_event_id or source_event_id in rec.get("derived_from", []):
-                    hits.append(rec.get("entry_id"))
+                    entry_id = str(rec.get("entry_id") or "")
+                    if entry_id and entry_id not in hits:
+                        hits.append(entry_id)
+            self.state.revoked = sorted(set(list(self.state.revoked or []) + hits))
             self._ledger(
                 {
                     "event": "revoke",
@@ -485,6 +622,7 @@ class MemoryStore:
                     "reason": "source event revoked",
                 }
             )
+            self._save_state()
         return {"source_event_id": source_event_id, "revoked": hits}
 
     def consolidate(self, anchor_ref: str, usage_ratio: float,

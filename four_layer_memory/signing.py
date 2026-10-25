@@ -120,8 +120,11 @@ def sign(root: str | pathlib.Path, record: dict) -> dict:
 
 
 def verify(root: str | pathlib.Path, record: dict) -> bool:
+    """Verify a record with the private key, or with the published key if only that is present."""
     root = pathlib.Path(root)
     alg = algorithm(root)
+    if alg is None and _pub_path(root).exists():
+        return verify_with_public(root, record)
     sig = record.get("sig")
     if alg is None:
         return sig is None
@@ -132,6 +135,20 @@ def verify(root: str | pathlib.Path, record: dict) -> bool:
     except SigningError:
         return False
     return hmac.compare_digest(sig, expected)
+
+
+def verify_with_public(root: str | pathlib.Path, record: dict) -> bool:
+    """Verify an Ed25519-signed record using only the public key file."""
+    root = pathlib.Path(root)
+    if record.get("sig_alg") != ED25519 or not record.get("sig"):
+        return False
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        pub = Ed25519PublicKey.from_public_bytes(_pub_path(root).read_bytes())
+        pub.verify(bytes.fromhex(record["sig"]), canonical_bytes(record))
+        return True
+    except Exception:
+        return False
 
 
 def public_key_hex(root: str | pathlib.Path) -> str:

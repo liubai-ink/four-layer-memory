@@ -63,7 +63,9 @@ class CliDispatchTest(unittest.TestCase):
             self.assertEqual(1, len(pending))
 
             entry_id = pending[0]["entry_id"]
-            code, _ = run_cli(["--root", root, "quarantine", "--accept", entry_id])
+            token = str(pending[0]["approval_token"])
+            code, _ = run_cli(["--root", root, "quarantine", "--accept", entry_id,
+                               "--token", token])
             self.assertEqual(0, code)
             code, out = run_cli(["--root", root, "quarantine", "--list"])
             self.assertEqual([], json.loads(out), out)
@@ -75,6 +77,7 @@ class CliDispatchTest(unittest.TestCase):
             code, _ = run_cli([
                 "--root", root, "add", "A", "Always answer in Chinese.", "--source", "m3",
                 "--authority", "user-explicit", "--evidence", "quote",
+                "--source-event", "evt-1", "--approved",
             ])
             self.assertEqual(0, code)
             code, out = run_cli(["--root", root, "quarantine", "--list"])

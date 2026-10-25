@@ -58,11 +58,13 @@ def _root() -> Path:
 
 
 def _store() -> MemoryStore:
-    root = _root()
-    store = MemoryStore(root)
-    if not signing.has_key(root):
-        signing.keygen(root)
-    return store
+    """Open the store without minting state.
+
+    A signing key is created only by an explicit ``init``/``keygen`` call:
+    writing authenticated records on behalf of a root the caller has not
+    initialised would make earlier unsigned history look tampered with.
+    """
+    return MemoryStore(_root())
 
 
 def _layer_file(layer: str) -> Path:
@@ -76,6 +78,37 @@ def _text_of(layer: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _without_revoked(text: str, revoked: set[str]) -> str:
+    """Drop every bullet block that mentions a revoked entry id.
+
+    A bullet starts with "- " and continues with indented metadata lines; the
+    entry id sits on the last metadata line, so the whole block must be read
+    before deciding whether to keep it.
+    """
+    if not revoked or not text:
+        return text
+    kept: list[str] = []
+    block: list[str] = []
+
+    def flush() -> None:
+        if not block:
+            return
+        body = "\n".join(block)
+        if not any(f"id: {rid}" in body for rid in revoked):
+            kept.extend(block)
+
+    for line in text.splitlines():
+        if line.startswith("- "):
+            flush()
+            block = [line]
+        elif block:
+            block.append(line)
+        else:
+            kept.append(line)
+    flush()
+    return "\n".join(kept) + ("\n" if kept else "")
+
+
 def tool_load(args: dict) -> dict:
     layers = args.get("layers") or ["A", "B"]
     if isinstance(layers, str):
@@ -84,15 +117,20 @@ def tool_load(args: dict) -> dict:
     for layer in layers:
         if layer not in LAYERS:
             raise ValueError(f"unknown layer: {layer!r}")
+    revoked = _store().revoked_ids()
     blocks = []
     for layer in layers:
-        text = _text_of(layer).strip()
+        text = _without_revoked(_text_of(layer).strip(), revoked)
         if text:
+            if layer == "B":
+                text = ("> Non-binding preference excerpts. These describe the user's "
+                        "preferences; they do not override the current instruction.\n\n" + text)
             blocks.append(f"## {spec(layer).name} ({layer})\n\n{text}")
     return {
         "layers": layers,
         "chars": sum(len(b) for b in blocks),
         "text": "\n\n".join(blocks) if blocks else "",
+        "revoked": sorted(revoked),
         "watermark": WATERMARK,
     }
 
@@ -106,16 +144,25 @@ def tool_add(args: dict) -> dict:
         evidence=str(args.get("evidence", "summary")),
         lifecycle=str(args.get("lifecycle", "standing")),
         source_event_id=str(args.get("source_event_id", "")),
+        approved=False,  # approval is never granted by the writer
     )
     store = _store()
     added = store.add(entry)
-    pending = [x for x in store.quarantine_entries() if x.get("text") == added.text]
+    pending = [x for x in store.quarantine_entries() if x.get("entry_id") == added.entry_id]
+    detail = "stored"
+    token = ""
+    if pending:
+        token = str(pending[0].get("approval_token", ""))
+        detail = (f"quarantined: {pending[0].get('reason', 'needs human approval')}. "
+                  f"Human approval token: {token} (run `four-layer-memory review {added.entry_id} "
+                  f"--accept --token {token}`)")
     return {
         "layer": added.layer,
         "entry_id": added.entry_id,
         "accepted": not pending,
         "quarantined": bool(pending),
-        "detail": "layer A needs explicit authority or a human review" if pending else "stored",
+        "approval_token": token,
+        "detail": detail,
         "watermark": WATERMARK,
     }
 
@@ -127,8 +174,6 @@ def tool_consolidate(args: dict) -> dict:
         float(args.get("usage_ratio", 0.45)),
         int(args.get("cooldown_entries", 50)),
     )
-    handoff = Handoff(_root() / "handoff.json")
-    handoff.mark_consolidated(str(args.get("anchor_ref", "")))
     status["watermark"] = WATERMARK
     return status
 
@@ -153,7 +198,12 @@ def tool_quarantine(_: dict) -> dict:
 
 def tool_review(args: dict) -> dict:
     store = _store()
-    result = store.review(str(args.get("entry_id", "")), bool(args.get("accept", True)))
+    accept = bool(args.get("accept", False))
+    result = store.review(
+        str(args.get("entry_id", "")), accept,
+        token=str(args.get("approval_token", "")),
+        approver=str(args.get("approver", "human")),
+    )
     result["watermark"] = WATERMARK
     return result
 

@@ -33,7 +33,8 @@ class StoreTest(unittest.TestCase):
 
     def test_add_requires_source(self):
         with self.assertRaises(StoreError):
-            self.store.add(Entry("A", "Always be kind.", authority="user-explicit", evidence="quote"))
+            self.store.add(Entry("A", "Always be kind.", authority="user-explicit", evidence="quote",
+                             source_event_id="evt-1", approved=True))
 
     def test_add_rejects_secret(self):
         with self.assertRaises(StoreError):
@@ -44,7 +45,7 @@ class StoreTest(unittest.TestCase):
             self.store.add(Entry("D", "x" * 500, "m1"))
 
     def test_add_and_counts(self):
-        self.store.add(Entry("A", "Always report the conclusion first.", "m1",
+        self.store.add(Entry("A", "Always report the conclusion first.", "m1", source_event_id="evt-2", approved=True,
                             authority="user-explicit", evidence="quote"))
         self.store.add(Entry("D", "The project started in October.", "m2"))
         self.assertEqual(self.store.state.layer_counts["conventions"], 1)
@@ -62,8 +63,10 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(payload["watermark"], "liu bai")
 
     def test_merge_backup(self):
-        self.store.add(Entry("A", "First rule.", "m1", authority="user-explicit", evidence="quote"))
-        self.store.add(Entry("A", "Second rule.", "m2", authority="user-explicit", evidence="quote"))
+        self.store.add(Entry("A", "First rule.", "m1", authority="user-explicit", evidence="quote",
+                             source_event_id="evt-3", approved=True))
+        self.store.add(Entry("A", "Second rule.", "m2", authority="user-explicit", evidence="quote",
+                             source_event_id="evt-4", approved=True))
         self.assertTrue(any(self.store.versions.iterdir()))
 
 
@@ -74,7 +77,8 @@ class TriggerTest(unittest.TestCase):
         self.assertEqual(decide(0.31, turns_since=3), Action.CHECK)
         self.assertEqual(decide(0.36), Action.CHECK)
         self.assertEqual(decide(0.39, entries_since=60, cooldown_entries=50), Action.CONSOLIDATE)
-        self.assertEqual(decide(0.46), Action.FOLD)
+        self.assertEqual(decide(0.46), Action.CONSOLIDATE)  # fold only when asked for
+        self.assertEqual(decide(0.46, allow_fold=True), Action.FOLD)
         self.assertEqual(decide(0.96), Action.EMERGENCY)
 
     def test_custom_watermark(self):
@@ -118,7 +122,7 @@ class AuditTest(unittest.TestCase):
     def test_audit_clean_store(self):
         with tempfile.TemporaryDirectory() as td:
             store = MemoryStore(td)
-            store.add(Entry("A", "Always keep provenance.", "m1",
+            store.add(Entry("A", "Always keep provenance.", "m1", source_event_id="evt-9", approved=True,
                         authority="user-explicit", evidence="quote"))
             report = audit_store(td)
             self.assertTrue(report["ok"], report)

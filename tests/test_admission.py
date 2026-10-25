@@ -56,15 +56,18 @@ class AdmissionCase(unittest.TestCase):
     def test_explicit_quote_is_admitted_to_a(self) -> None:
         e = self.store.add(
             Entry("A", "Report the conclusion before the evidence.",
-                  source="msg:001", authority="user-explicit", evidence="quote")
+                  source="msg:001", authority="user-explicit", evidence="quote",
+                  source_event_id="evt-001", approved=True)
         )
         self.assertIn(e.text, self._layer_text("A"))
         self.assertNotIn(e.entry_id, self.store.quarantine_path.read_text(encoding="utf-8"))
 
     # 3. a superseded preference is revised, not silently inherited
     def test_superseded_preference_is_a_new_dated_entry(self) -> None:
-        first = self.store.add(Entry("B", "Prefers dense tables over prose.", "msg:010"))
-        second = self.store.add(Entry("B", "Prefers prose with a summary table.", "msg:120"))
+        first = self.store.add(Entry("B", "Prefers dense tables over prose.", "msg:010",
+                                     authority="user-explicit", evidence="quote"))
+        second = self.store.add(Entry("B", "Prefers prose with a summary table.", "msg:120",
+                                      authority="user-explicit", evidence="quote"))
         body = self._layer_text("B")
         self.assertIn(first.text, body)
         self.assertIn(second.text, body)
@@ -92,7 +95,8 @@ class AdmissionCase(unittest.TestCase):
 
     # audit separates the three checks
     def test_audit_reports_three_checks(self) -> None:
-        self.store.add(Entry("B", "Prefers short replies in the morning.", "msg:401"))
+        self.store.add(Entry("B", "Prefers short replies in the morning.", "msg:401",
+                             authority="user-explicit", evidence="quote"))
         report = audit_store(self.tmp)
         self.assertIn("structural", report["checks"])
         self.assertIn("content", report["checks"])
@@ -104,8 +108,19 @@ class AdmissionCase(unittest.TestCase):
         self.assertFalse(decide("A", "observed", "quote").accept)
         self.assertFalse(decide("A", "user-explicit", "paraphrase").accept)
         self.assertFalse(decide("A", "model-generated", "summary").accept)
-        self.assertTrue(decide("A", Authority.USER_EXPLICIT, Evidence.QUOTE).accept)
-        self.assertTrue(decide("B", "inferred", "inference").accept)
+        # explicit + quoted is necessary but no longer sufficient: A also needs
+        # the immutable source event and a recorded human approval.
+        self.assertFalse(decide("A", Authority.USER_EXPLICIT, Evidence.QUOTE).accept)
+        self.assertFalse(decide("A", Authority.USER_EXPLICIT, Evidence.QUOTE,
+                                source_event_id="evt-1").accept)
+        self.assertTrue(decide("A", Authority.USER_EXPLICIT, Evidence.QUOTE,
+                               source_event_id="evt-1", approved=True).accept)
+        # B holds user preferences; a model guess or a summary cannot become one.
+        self.assertFalse(decide("B", "inferred", "inference").accept)
+        self.assertFalse(decide("B", "user-explicit", "summary").accept)
+        self.assertTrue(decide("B", "user-implied", "paraphrase").accept)
+        # sensitive text is quarantined even outside the binding layer
+        self.assertFalse(decide("C", "observed", "quote", text="her medical diagnosis").accept)
         self.assertTrue(decide("D", None, None).accept)
 
 
