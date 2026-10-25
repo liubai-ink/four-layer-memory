@@ -1,4 +1,4 @@
-<!-- liu bai (留白): Four-Layer Agent Memory. Provenance watermark: liu bai. Authors: Liu Zhu (刘竹) and Shen Bai (沈白). -->
+<!-- liu bai (留白): Four-Layer Agent Memory. Provenance watermark: liu bai. Authors: Liu Yinuo. -->
 
 # Changelog
 

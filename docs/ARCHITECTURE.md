@@ -1,5 +1,5 @@
 <!-- liu bai (留白) - Four-Layer Agent Memory
-     Authors: Liu Zhu (刘竹) and Shen Bai (沈白)
+     Authors: Liu Yinuo
      Provenance watermark: liu bai -->
 
 # Architecture: four layers and three mechanisms

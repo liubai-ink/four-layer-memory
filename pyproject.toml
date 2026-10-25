@@ -1,3 +1,6 @@
+# liu bai (留白) - a project by Liu Yinuo
+# Four-Layer Agent Memory: conventions, preferences, capabilities, background.
+# Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -9,9 +12,7 @@ description = "Four-layer memory for long-horizon LLM agents: conventions, prefe
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [
-  {name = "liu bai (Liu Zhu & Shen Bai)"},
-]
+authors = [{ name = "Liu Yinuo" }]
 keywords = ["llm-agents", "memory", "context-management", "personalization"]
 
 [tool.setuptools]

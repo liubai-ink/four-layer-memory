@@ -1,5 +1,5 @@
 <!--
-liu bai (留白) - a project by Liu Zhu (刘竹) and Shen Bai (沈白)
+liu bai (留白) - a project by Liu Yinuo
 Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 -->

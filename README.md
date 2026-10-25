@@ -1,11 +1,15 @@
 # Four-Layer Agent Memory · liu bai (留白)
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23638826.svg)](https://doi.org/10.5281/zenodo.23638826)
+
 > Long-horizon LLM agents lose themselves in their own context. This repository
 > keeps the working memory small and the memory that *matters* on disk, split
 > into four layers that different mechanics keep alive.
 
-**Authors**: Liu Zhu (刘竹) and Shen Bai (沈白) — together **liu bai** (留白).
+**Author**: Liu Yinuo — project **liu bai** (留白).
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
+
+> **Archived release.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI, always resolves to the latest version) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827).
 
 ## Download and use in five minutes
 
@@ -19,12 +23,14 @@ four-layer-memory --root ./memory audit        # {"ok": true, ...}
 
 Then pick how your agent talks to it:
 
-- **MCP** (Claude Desktop, Cursor, any MCP client): run our-layer-memory-mcp
+- **MCP** (Claude Desktop, Cursor, any MCP client): run 
+our-layer-memory-mcp
   --root ./memory and paste the JSON from [docs/INTEGRATING.md](docs/INTEGRATING.md).
   The model gets eight tools (memory_load, memory_add, memory_consolidate,
   memory_status, memory_audit, memory_quarantine, memory_review,
   memory_handoff) and needs no code changes on the host side.
-- **Python**: rom four_layer_memory import MemoryStore, Entry — see
+- **Python**: 
+rom four_layer_memory import MemoryStore, Entry — see
   [docs/INTEGRATING.md](docs/INTEGRATING.md) §2.
 - **CLI**: for poking at a store by hand.
 
@@ -131,7 +137,8 @@ evoke,
 eview, and consolidate. Batched writes use
   `add_many` so a batch shares one state update.
 - **Crash-shaped writes.** Every file write goes through an atomic replace
-  (mkstemp -> sync -> os.replace), so a killed process leaves either the
+  (mkstemp -> 
+sync -> os.replace), so a killed process leaves either the
   old file or the new one, never half of each.
 - **Tamper-evident ledger.** `ledger.jsonl` is a hash chain: each record
   carries `prev` and `hash` over canonical JSON. `ledger_integrity()`
