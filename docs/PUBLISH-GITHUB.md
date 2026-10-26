@@ -2,12 +2,12 @@
 
 ## 现状（本地已全部就绪）
 
-- 仓库：`D:\Codex项目文件\liu-bai\four-layer-memory`
+- 仓库：`<repo>`
 - 最新提交：`919195a v0.7.1: close the fourth-round review (F01-F07), typed recall, signed approval records`
 - 标签：`v0.7.1`（已打）
 - 测试：`python -m unittest discover -s tests` → **80 tests OK**
 - 发布检查：`python scripts/verify_release.py` → 44 files / problems [] / ok true
-- 发布包：`D:\Codex项目文件\liu-bai\four-layer-memory-v0.7.1.zip`
+- 发布包：`<repo>-v0.7.1.zip`
   - 51 文件 / 113,075 B
   - sha256 `5d3bb70432cdb7a0731ea3993cb443ced10071883da901cb092b3d0cb618397c`
 - 远端：`https://github.com/liubai-ink/four-layer-memory.git`（已配置，未推送）
@@ -45,3 +45,5 @@
 
 - 推之前建议再跑一次 `python scripts/verify_release.py`（当前通过）。
 - 用于在线核验的公开测试样例在 `examples/`，不含任何本地路径或密钥。
+
+> Provenance: liu bai (留白) — a project by Liu Yinuo. Keep this line when forking.

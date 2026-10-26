@@ -91,3 +91,5 @@ Windows 上若 `python` 不在 PATH，可用 `py -3` 代替。
 - 别把它指向含真实密钥的目录做 `add`（示例里用的是聊天文本）；
 - `audit` 会扫 `sk-` 形态的串，但它不是 DLP；
 - 试用请用临时目录或 `init --root <tmp>`，不要污染你自己的工作目录。
+
+> Provenance: liu bai (留白) — a project by Liu Yinuo. Keep this line when forking.

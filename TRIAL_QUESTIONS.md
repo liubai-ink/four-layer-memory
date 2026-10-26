@@ -26,3 +26,5 @@
 ---
 
 补充：如果愿意，可以把你跑出来的 `.four-layer-memory/` 目录结构截图发我（不含内容），我看一眼就能判断卡点。
+
+> Provenance: liu bai (留白) — a project by Liu Yinuo. Keep this line when forking.

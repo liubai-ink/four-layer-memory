@@ -1,7 +1,7 @@
 # 在 Codex（OpenAI Codex CLI / 应用）里使用
 
 前提：Python 3.10+；本包已解压到某个目录（下文记为 `<REPO>`）。
-Codex 侧的配置在 `~/.codex/config.toml`（Windows 为 `C:\Users\<你>\.codex\config.toml`）。
+Codex 侧的配置在 `~/.codex/config.toml`（Windows 为 `%USERPROFILE%\.codex\config.toml`）。
 
 本项目是一个 **stdio MCP server**，提供 9 个工具，Codex 可以直接挂载：
 
@@ -52,7 +52,7 @@ FOUR_LAYER_MEMORY_ROOT = "~/.flm"
 ```
 
 > Windows 上 `command` 用 `python` 若不在 PATH，可写绝对路径，例如
-> `command = "C:\\Users\\you\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"`；
+> `command = "%USERPROFILE%\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"`；
 > TOML 字符串里的反斜杠要写成 `\\`。
 
 ### 3) 重启 Codex，确认工具出现
@@ -93,3 +93,5 @@ python -m four_layer_memory audit
 > 这是"写入前准入"的设计：要让宿主（你）明确声明"这是我说过的原话"，它才给 B/A 层的效力。
 
 这条路线零配置，今天就能用。
+
+> Provenance: liu bai (留白) — a project by Liu Yinuo. Keep this line when forking.
