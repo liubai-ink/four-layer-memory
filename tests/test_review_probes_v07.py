@@ -234,9 +234,18 @@ class ReviewerProbesV07(unittest.TestCase):
         self.assertEqual(self.store.quarantined(), 1)
 
     def test_versions_are_unified(self) -> None:
+        import re
+        from pathlib import Path
+
         import four_layer_memory as pkg
-        self.assertEqual("0.7.0", pkg.__version__)
-        self.assertEqual("0.7.0", mcp.SERVER_VERSION)
+
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        text = pyproject.read_text(encoding="utf-8")
+        match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        self.assertIsNotNone(match, "pyproject.toml is missing a version field")
+        expected = match.group(1)
+        self.assertEqual(expected, pkg.__version__)
+        self.assertEqual(expected, mcp.SERVER_VERSION)
 
 
 if __name__ == "__main__":  # pragma: no cover
