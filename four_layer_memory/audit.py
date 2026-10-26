@@ -3,14 +3,19 @@
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 # ---------------------------------------------------------------------------
-"""Invariants an on-disk memory store should satisfy.
+"""Audit a memory root: structure, content, authorization, ledger.
 
-Audit reports four checks separately, because they make different claims:
-  structural   -- files exist, provenance is present, counters agree
-  content      -- no credential-shaped strings or absolute user paths
-  authorization-- no layer-A entry lacks explicit quoted approval, and every
-                  layer file still hashes to what the ledger says it should
-  ledger       -- the hash chain recomputes
+v0.7.1 makes every check *structured*: findings carry a machine readable
+``code`` so a caller can tell "no finding" from "a finding that was not
+recognised".  Concretely:
+
+* the loader and the audit agree on what is a record (F06);
+* a layer-A entry is only accepted when a host-minted approval record is in
+  the ledger and verifies against the entry it approves (F04);
+* a secret-like token reported by the content scan fails the check
+  (F07 - the old code compared against a stale message suffix);
+* a truncated ledger fails the audit instead of being overwritten by a
+  later recovery (F01).
 """
 
 from __future__ import annotations
@@ -19,124 +24,185 @@ import hashlib
 import re
 from pathlib import Path
 
-from . import admission
+from . import admission, approval, signing
 from .layers import Layer, spec
-from .store import MemoryStore
+from .store import Entry, MemoryStore, _norm
 from .watermark import WATERMARK
 
-_BS = chr(92)
-FORBIDDEN_PATH = re.compile("[A-Za-z]:" + _BS + _BS + "Users" + _BS + _BS + "|/home/[^/]+/")
-SECRET = re.compile("sk-" + "[A-Za-z0-9_-]{16,}")
+REQUIRED = ("state.json", "ledger.jsonl", "quarantine/pending.md")
+SECRET = re.compile(r"sk-[A-Za-z0-9_-]{16,}")
+USERPATH = re.compile("[A-Za-z]:" + chr(92) + chr(92) + "Users" + chr(92) + chr(92) + "|/home/[^/]+/")
+SENSITIVE = admission.SENSITIVE_PATTERNS
 
 
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def _scan(text: str, label: str) -> list[dict]:
+    findings: list[dict] = []
+    if SECRET.search(text):
+        findings.append({"code": "secret_like_token", "label": label,
+                         "message": "secret-like token (sk-...)"})
+    if USERPATH.search(text):
+        findings.append({"code": "absolute_user_path", "label": label,
+                         "message": "absolute user path"})
+    return findings
 
 
 def audit_store(root: str | Path) -> dict:
     root = Path(root)
-    store = MemoryStore(root)
+    checks: dict[str, dict] = {}
+    problems: list[str] = []
 
-    structural: list[str] = []
-    content: list[str] = []
-    authorization: list[str] = []
-    ledger_problems: list[str] = []
+    # -- structural --------------------------------------------------------
+    structural: dict = {"ok": True, "findings": []}
+    missing = [name for name in REQUIRED if not (root / name).exists()]
+    if missing:
+        structural["missing"] = missing
+        structural["findings"].append({"code": "missing_files", "files": missing})
+    state: dict = {}
+    try:
+        store = MemoryStore(root, recover=False)
+        state = store.state.__dict__ if store.state else {}
+    except Exception as exc:  # pragma: no cover - defensive
+        structural["open_error"] = repr(exc)
+        problems.append(f"store cannot be opened: {exc!r}")
+        structural["ok"] = False
+        checks["structural"] = structural
+        for name in ("content", "authorization", "ledger"):
+            checks[name] = {"ok": False, "skipped": True}
+        return _report(checks, problems)
 
-    total = 0
+    layer_text = {layer.value: (store.path_for(layer).read_text(encoding="utf-8")
+                                if store.path_for(layer).exists() else "") for layer in Layer}
+
+    unknown: dict[str, int] = {}
+    unknown_lines: list[str] = []
     for layer in Layer:
-        p = store.path_for(layer)
-        if not p.exists():
-            structural.append(f"missing layer file: {p.name}")
-            continue
-        text = p.read_text(encoding="utf-8")
-        if WATERMARK not in text and len(text.strip()) > 40:
-            structural.append(f"watermark missing: {p.name}")
-        if SECRET.search(text):
-            content.append(f"possible secret in {p.name}")
-        if FORBIDDEN_PATH.search(text):
-            content.append(f"absolute user path in {p.name}")
-        total += text.count("\n- ")
+        _blocks, unk = store._parse_layer(layer)
+        if unk:
+            unknown[spec(layer).target] = len(unk)
+            unknown_lines.extend(f"{spec(layer).target}: {line[:80]}" for line in unk[:5])
+    if unknown:
+        structural["unknown"] = unknown
+        structural["unknown_sample"] = unknown_lines[:20]
+        structural["findings"].append({"code": "unknown_layer_lines", "counts": unknown})
 
-    state = store.state
-    counted = sum(state.layer_counts.values())
-    if total and counted != total:
-        structural.append(f"state counters disagree: counted={counted} on_disk={total}")
+    trunc = dict(state.get("truncated") or {})
+    if trunc:
+        structural["ledger_truncated"] = trunc
+        structural["findings"].append({"code": "ledger_truncated", "detail": trunc})
 
-    # Authorization: replay the ledger; A writes must have been approved and sourced.
-    bad_a = 0
-    revoked = 0
-    expect_file: dict[str, str] = {}
-    for rec in store.ledger_records():
-        event = rec.get("event")
-        if event == "revoke":
-            revoked += len(rec.get("entry_ids") or [])
-            continue
-        if event == "bind":
-            if rec.get("layer_sha256"):
-                expect_file[str(rec.get("layer", ""))] = str(rec["layer_sha256"])
-            continue
-        if event not in ("write", "approve"):
-            continue
-        layer = str(rec.get("layer", ""))
-        if event == "write" or layer == "A":
-            decision = admission.decide(
-                layer or "D", rec.get("authority"), rec.get("evidence"),
-                source_event_id=str(rec.get("source_event_id") or ""),
-                approved=bool(rec.get("approved")),
-                text=str(rec.get("text") or ""),
-            )
-            if not decision.accept and layer == "A":
-                bad_a += 1
-        if rec.get("layer_sha256"):
-            expect_file[layer] = str(rec["layer_sha256"])
-    if bad_a:
-        authorization.append(f"{bad_a} layer-A entries lack explicit quoted approval")
+    if state.get("watermark") != WATERMARK:
+        structural["findings"].append({"code": "missing_watermark"})
 
-    # Every layer file must still hash to the value recorded when it was last
-    # written through the store; otherwise the bytes changed outside the ledger.
+    counts = store.state.layer_counts or {}
     for layer in Layer:
-        p = store.path_for(layer)
-        text = p.read_text(encoding="utf-8") if p.exists() else ""
-        has_entries = any(line.startswith("- ") for line in text.splitlines())
-        if not has_entries:
-            continue
-        if layer.value not in expect_file:
-            authorization.append(
-                f"layer file has content but no ledger record covers it: {spec(layer).target}"
-            )
-    for layer, expected in expect_file.items():
-        p = store.path_for(layer)
-        if not p.exists():
-            authorization.append(f"layer file vanished: {spec(layer).target}")
-            continue
-        if _sha(p.read_text(encoding="utf-8")) != expected:
-            authorization.append(
-                f"layer file does not match the ledger hash: {spec(layer).target} "
-                f"(edited outside the store?)"
-            )
+        name = spec(layer).name
+        actual = layer_text[layer.value].count("\n- ") + (1 if layer_text[layer.value].startswith("- ") else 0)
+        if int(counts.get(name, 0)) != actual:
+            structural["findings"].append({"code": "count_mismatch", "layer": name,
+                                           "state": counts.get(name), "file": actual})
 
-    ledger = store.ledger_integrity()
-    if not ledger["ok"]:
-        ledger_problems.append(
-            "ledger chain broken at record " + str(ledger.get("at")) + ": " + str(ledger.get("reason"))
+    structural["ok"] = not structural["findings"]
+    problems.extend(f"structural: {f.get('code')} {f.get('detail') or f.get('counts') or ''}".strip()
+                    for f in structural["findings"])
+    checks["structural"] = structural
+
+    # -- content -----------------------------------------------------------
+    content: dict = {"ok": True, "findings": []}
+    findings: list[dict] = []
+    for layer in Layer:
+        findings.extend(_scan(layer_text[layer.value], spec(layer).target))
+    pend = store.quarantine_path.read_text(encoding="utf-8") if store.quarantine_path.exists() else ""
+    findings.extend(_scan(pend, "quarantine/pending.md"))
+    content["findings"] = findings
+    if findings:
+        content["codes"] = sorted({f["code"] for f in findings})
+        problems.extend(f"{f['label']}: {f['message']}" for f in findings)
+    content["ok"] = not findings
+    checks["content"] = content
+
+    # -- authorization -----------------------------------------------------
+    authorization: dict = {"ok": True, "findings": []}
+    auth: list[dict] = []
+    records = store.ledger_records()
+    expected = store.expected_layers()
+    for layer in Layer:
+        if _norm(expected[layer.value]) != _norm(layer_text[layer.value]):
+            auth.append({"code": "layer_diverges", "layer": spec(layer).target})
+    bound_tx = {str(r.get("tx")) for r in records if r.get("event") == "bind" and r.get("tx")}
+    known_ids = {str(r.get("entry_id")) for r in records
+                 if r.get("event") in ("write", "approve")}
+    for layer in Layer:
+        for entry, _raw in store._parse_layer(layer)[0]:
+            if entry.entry_id and entry.entry_id not in known_ids:
+                auth.append({"code": "orphan_entry", "entry_id": entry.entry_id,
+                             "layer": spec(layer).target})
+    root_key = store.root
+    for rec in records:
+        if rec.get("event") not in ("write", "approve"):
+            continue
+        if rec.get("tx") and str(rec["tx"]) not in bound_tx:
+            auth.append({"code": "unbound_transaction", "tx": rec.get("tx")})
+        try:
+            entry = Entry.from_record(rec)
+        except Exception:  # pragma: no cover - defensive
+            auth.append({"code": "unreadable_record"})
+            continue
+        if entry.layer != "A":
+            continue
+        decision = admission.decide(
+            entry.layer, entry.authority, entry.evidence,
+            source_event_id=entry.source_event_id,
+            approved=entry.approved,
+            text=entry.text,
         )
+        if not decision.accept:
+            auth.append({"code": "a_not_authorized", "entry_id": entry.entry_id,
+                         "reason": decision.reason})
+        if rec.get("event") == "write":
+            auth.append({"code": "a_without_approval", "entry_id": entry.entry_id})
+            continue
+        arec = rec.get("approval_record")
+        if not isinstance(arec, dict) or not approval.verify(root_key, arec):
+            auth.append({"code": "approval_unverified", "entry_id": entry.entry_id})
+            continue
+        text_sha = hashlib.sha256(entry.text.encode("utf-8")).hexdigest()
+        if arec.get("text_sha256") != text_sha:
+            auth.append({"code": "approval_text_mismatch", "entry_id": entry.entry_id})
+        if str(arec.get("source_event_id") or "") != str(entry.source_event_id or ""):
+            auth.append({"code": "approval_source_mismatch", "entry_id": entry.entry_id})
+        if not str(arec.get("approver") or "").strip():
+            auth.append({"code": "approval_missing_approver", "entry_id": entry.entry_id})
+    authorization["findings"] = auth
+    if auth:
+        authorization["codes"] = sorted({f["code"] for f in auth})
+        problems.extend(f"authorization: {f['code']} {f.get('entry_id') or f.get('layer') or ''}".strip()
+                        for f in auth)
+    authorization["ok"] = not auth
+    checks["authorization"] = authorization
 
-    quarantined = store.quarantined()
-    ok = not structural and not content and not authorization and not ledger_problems
+    # -- ledger ------------------------------------------------------------
+    integrity = store.ledger_integrity()
+    ledger_check = {"ok": bool(integrity.get("ok")), "records": integrity.get("records"),
+                    "signed": integrity.get("signed"), "verified": integrity.get("verified"),
+                    "verified_with": integrity.get("verified_with")}
+    if trunc:
+        ledger_check["ok"] = False
+        ledger_check["reason"] = "ledger truncated"
+        problems.append("ledger: truncated")
+    if not integrity.get("ok"):
+        ledger_check["reason"] = integrity.get("reason")
+        problems.append(f"ledger: {integrity.get('reason')}")
+    checks["ledger"] = ledger_check
+
+    return _report(checks, problems)
+
+
+def _report(checks: dict, problems: list[str]) -> dict:
+    ok = all(bool(c.get("ok")) for c in checks.values())
     return {
-        "root": str(root),
-        "entries": total,
-        "counted": counted,
-        "quarantined": quarantined,
-        "revoked_entries": revoked,
-        "watermark": WATERMARK,
-        "checks": {
-            "structural": {"ok": not structural, "problems": structural},
-            "content": {"ok": not content, "problems": content},
-            "authorization": {"ok": not authorization, "problems": authorization},
-            "ledger": {"ok": not ledger_problems, "problems": ledger_problems,
-                       "head": ledger.get("head", "")},
-        },
-        "problems": structural + content + authorization + ledger_problems,
         "ok": ok,
+        "checks": checks,
+        "problems": problems,
+        "store_version": MemoryStore.VERSION if hasattr(MemoryStore, "VERSION") else "0.7.1",
+        "watermark": WATERMARK,
     }

@@ -16,6 +16,7 @@ from pathlib import Path
 from four_layer_memory import signing
 from four_layer_memory.audit import audit_store
 from four_layer_memory.store import Entry, MemoryStore
+import helpers
 
 
 class SigningCase(unittest.TestCase):
@@ -100,9 +101,7 @@ class SigningCase(unittest.TestCase):
         self.assertEqual(len(signing.public_key_hex(self.tmp)), 64)
 
         store = MemoryStore(self.tmp)
-        store.add(Entry("A", "Always cite the source event.", "msg:3", source_event_id="evt-1", approved=True,
-                    authority="user-explicit",
-                        evidence="quote"))
+        helpers.add_a(store, "Always cite the source event.", "msg:3", "evt-1")
         self.assertTrue(store.ledger_integrity()["ok"])
         self.assertEqual(store.ledger_integrity()["signed"], signing.ED25519)
 

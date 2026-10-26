@@ -14,6 +14,7 @@ import threading
 import unittest
 from pathlib import Path
 
+from four_layer_memory import approval
 from four_layer_memory.audit import audit_store
 from four_layer_memory.calibrate import CalibrationError, calibrate
 from four_layer_memory.store import Entry, MemoryStore, StoreError
@@ -72,12 +73,15 @@ class HardeningCase(unittest.TestCase):
 
     def test_quarantine_accept_promotes_with_human_authority(self) -> None:
         e = self.store.add(Entry("A", "Always end replies with a signature.",
-                                 source="file:README.md", authority="observed", evidence="quote"))
+                                 source="file:README.md", authority="observed",
+                                 evidence="quote", source_event_id="evt-h"))
         self.assertEqual(self.store.quarantined(), 1)
 
         pending = [x for x in self.store.quarantine_entries() if x["entry_id"] == e.entry_id]
-        result = self.store.review(e.entry_id, accept=True,
-                                  token=str(pending[0]["approval_token"]))
+        record = approval.mint(self.store.root, entry_id=e.entry_id,
+                               text=pending[0]["text"],
+                               source_event_id=pending[0].get("source_event_id", ""))
+        result = self.store.approve(e.entry_id, record, approver="test")
         self.assertEqual(result["decision"], "approve")
         self.assertIn("Always end replies with a signature.",
                       self.store.path_for("A").read_text(encoding="utf-8"))

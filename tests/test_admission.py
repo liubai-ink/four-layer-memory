@@ -21,6 +21,8 @@ from four_layer_memory.admission import Authority, Evidence, decide
 from four_layer_memory.audit import audit_store
 from four_layer_memory.store import Entry, MemoryStore
 
+from tests import helpers
+
 
 class AdmissionCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -54,10 +56,11 @@ class AdmissionCase(unittest.TestCase):
 
     # quoted + explicit is the only path into A
     def test_explicit_quote_is_admitted_to_a(self) -> None:
-        e = self.store.add(
-            Entry("A", "Report the conclusion before the evidence.",
-                  source="msg:001", authority="user-explicit", evidence="quote",
-                  source_event_id="evt-001", approved=True)
+        e = helpers.add_a(
+            self.store,
+            "Report the conclusion before the evidence.",
+            source="msg:001",
+            source_event_id="evt-001",
         )
         self.assertIn(e.text, self._layer_text("A"))
         self.assertNotIn(e.entry_id, self.store.quarantine_path.read_text(encoding="utf-8"))

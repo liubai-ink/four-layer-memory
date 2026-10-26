@@ -2,6 +2,120 @@
 
 # Changelog
 
+## 0.7.1 - 2026-10-26
+
+### Fourth review: closable gaps, one contract change (v0.7.1)
+Seven findings reproduced against v0.7.0; each is now a named regression test.
+
+- **F01 truncation resurrection** — the store records `state.ledger_records` and
+  `state.ledger_head`; a truncated signed suffix is never repaired by raising the
+  claim. Reads and writes are refused while truncated, and a repair is recorded
+  in `state.recovered`. (test_store_f01_truncation)
+- **F02 multi-hop revocation** — `derived_from` now holds typed references (entry
+  ids *and* source events); `_closure` resolves through an event-owner map and
+  runs to a fixed point, so grandchildren of a revoked event are invalidated.
+  (test_store_f02_multihop_revocation)
+- **F03 interrupted transactions** — recovery completes a write whose bind record
+  is missing and an approval whose bind is missing, rebuilds the resolved set
+  from ledger records, and `approve()` is idempotent by transaction identity.
+  (test_store_f03_*)
+- **F04 caller-supplied approval** — `add(..., approved=True)` is refused with a
+  `StoreError`; promotion requires a host-minted, signed approval record whose
+  text hash and source event match, and the record is embedded in the ledger so
+  the audit can verify it without the host. **Contract change**: tests that wrote
+  binding-layer entries through the library now mint an approval record first.
+  (test_store_f04_approval_required, test_review_probes_v07)
+- **F05 dropped expiry and scope** — CLI and MCP pass `scope`/`expires_at`
+  through, record them, filter them at load and count expiries in `status`.
+  (test_mcp_f05_scope_expiry)
+- **F06 unvalidated exposure** — `read_layers()` reconstructs the servable view
+  from committed records instead of reading the layer files, refuses unbound
+  edits, and returns unknown blocks as counts on a diagnostics channel rather
+  than echoing their text. (test_store_f06_unbound_not_served)
+- **F07 audit aggregation** — content and authorization checks emit structured
+  findings with codes; the verdict is the conjunction of the four sub-checks.
+  (test_audit_f07_secret_blocks)
+
+Also: `audit` now reports `a_without_approval` / `approval_unverified` /
+`approval_text_mismatch` / `approval_source_mismatch`; `status()` reports
+`ledger_head`, `ledger_truncated` and `expired`.
+
+Test suite: 80 tests. Independent reviewer probes: 29 checks, 0 demonstrated.
+## 0.7.0 - 2026-10-26
+
+### Typed recall (v0.7.0)
+- New `MemoryStore.search(query, layer=None, include_revoked=False,
+  include_expired=False, limit=20)` and MCP tool `memory_recall`. Retrieval
+  returns entries with `authority`, `evidence`, `lifecycle`, `scope` and a
+  `revoked` flag instead of transcript chunks, so a host can distinguish
+  authorised knowledge from an unverified remark. Revoked and expired entries
+  are filtered by default; `include_revoked=True` shows what was retracted.
+- 6 regression tests in `tests/test_recall.py` (typed fields, exact-substring
+  behaviour, revocation filter, layer filter/limit, unknown layer).
+
+Third review round (v0.4 manuscript). Six groups of fixes, all pinned as
+regression tests; the counterexample list is R01-R13 in
+`tests/test_review_probes_v07.py` and `scripts/verify_v07_probes.py` confirms
+19/19 checks against an installed tree (`_v07/result.json`).
+
+### Approval is a host action (F01)
+- New `four_layer_memory/approval.py`: an approval record binds one approval to
+  one entry id, the entry's `text_sha256`, its source event, the target scope
+  (`layer:A`) and the format version, and is HMAC-signed with `.approval_key`
+  (created by `init`). `MemoryStore.approve(entry_id, record)` verifies the
+  record, re-runs `admission.decide(approved=True)`, and refuses entries whose
+  source event was revoked.
+- MCP no longer returns any approval material: `memory_add` reports a
+  quarantine reason only, and `memory_review` can only reject (`accept=true`
+  raises). Acceptance is a CLI/Python host action: `four-layer-memory approve
+  <entry_id>`. `quarantine --accept` and `approval_token` are gone.
+- `admission.decide` is now the single gate for both `add` and `approve`.
+
+### Revocation is durable and transitive (F02)
+- `revoke(source_event_id)` records a tombstone and walks `derived_from`
+  chains over the ledger (multi-hop); the result lists every revoked entry id.
+- Revocation is recomputed from the ledger on every open and every load:
+  losing `state.json`, or a stale handle doing `consolidate`, cannot resurrect
+  an entry. The loader filters revoked/expired entries, not raw file text.
+- `add`/`add_many`/`approve` quarantine lineage that points at a revoked source
+  or entry instead of loading it.
+
+### Crash recovery and idempotency (F03)
+- Every write is a typed transaction: `write` carries the entry plus the
+  expected layer bytes; the file is replaced; `bind` hashes the bytes on disk.
+  On open, an unbound transaction is materialised or re-bound; a retried `add`
+  repairs a partial commit, and a foreign file change is refused instead of
+  silently absorbed (`_guard_bytes`).
+- `Handoff.resume_report()` returns `cursor_valid`, `replayed_from_start`,
+  `store_seq` and `recovered`; there is still a single cursor (no snapshot).
+- `MemoryStore(..., recover=False)` exists so the audit can report without
+  repairing.
+
+### Audit is derived from the ledger (F04)
+- `expected_layers()` rebuilds each layer's bytes from write/approve records;
+  the audit compares files to that and reports divergence, orphan entries and
+  unbound transactions.
+- A strict loader grammar: only bullet blocks with metadata are records. Any
+  other line is reported as `unknown_blocks` and never served by
+  `memory_load`/`read_layers`.
+
+### Signatures and admission details (F05, F06)
+- `signing.material()` / `verify_with_material()` distinguish "no key material"
+  from "verified": a signed ledger with only public material is checked with the
+  public key, and a signature that cannot be checked is not reported as valid.
+- Sensitive patterns use word boundaries, so `archive`/`shiver` no longer match
+  `hiv`; `authority` and `evidence` gained `none`; `lifecycle` scope/expiry is
+  enforced by the loader (with `scope`/`expires_at` fields).
+- Version strings unified at 0.7.0 (`__version__`, MCP server version, pyproject).
+
+### Tests and docs
+- `pytest`: 75 passed (60 v0.6 tests migrated to the host-approval flow, 15 new
+  review regressions). `scripts/verify_v07_probes.py`: 19 checks, 19
+  `fix_confirmed`, 0 probe errors.
+- README, ARCHITECTURE, THREAT-MODEL, INTEGRATING and LOADING updated to the
+  v0.7 trust boundary; `docs/REVIEW-RESPONSE-v04.md` maps F01-F06 and R01-R13
+  to code, tests and paper v0.5.
+
 ## 0.6.1 - 2026-10-25
 
 - Align `prompts/LOADING.md` with the implemented policy: five-state watermark

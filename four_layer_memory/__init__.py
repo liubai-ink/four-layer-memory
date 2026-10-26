@@ -18,13 +18,15 @@ keeps the long tail on disk, organised by layer and retrievable on demand.
 """
 
 from .layers import Layer, LAYERS, LayerSpec
-from .store import MemoryStore, Entry, StoreError
+from .store import MemoryStore, Entry, StoreError, DEFAULT_COOLDOWN_ENTRIES, STORE_FORMAT
 from .triggers import Watermark, Action, decide
 from .audit import audit_store
 from .watermark import WATERMARK, stamp
+from . import approval, signing
 
 __all__ = [
     "Layer", "LAYERS", "LayerSpec", "MemoryStore", "Entry", "StoreError",
-    "Watermark", "Action", "decide", "audit_store", "WATERMARK", "stamp",
+    "DEFAULT_COOLDOWN_ENTRIES", "STORE_FORMAT", "Watermark", "Action", "decide",
+    "audit_store", "WATERMARK", "stamp", "approval", "signing",
 ]
-__version__ = "0.1.0"
+__version__ = "0.7.1"

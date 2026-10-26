@@ -40,19 +40,22 @@ BINDING_LAYER = "A"
 PREFERENCE_LAYER = "B"
 
 # patterns that mark content a "background" store has no business keeping
+# Each line-anchored word group uses a left boundary so that ordinary words
+# ("archive", "clinic-side" is fine either way) do not trip the medical gate.
 SENSITIVE_PATTERNS = (
-    re.compile(r"(?i)(hiv|hepatitis|herpes|cancer|diagnos|prescription|dosage|"
-               r"depress|anxiety disorder|therapy|surgery|medical (note|record|history)|"
-               r"patient record|clinic|hospital|symptom|allerg)"),
+    re.compile(r"(?i)(?<![a-z])(hiv|hepatitis|herpes|cancer|diagnos\w*|prescription|dosage|"
+               r"depress\w*|anxiety disorder|therapy|surgery|medical (note|record|history)|"
+               r"patient record|clinic|hospital|symptom|allerg\w*)(?![a-z])"),
     re.compile(r"(病历|诊断|处方|用药|手术|精神科|抑郁|焦虑症|化验单|体检报告)"),
-    re.compile(r"(?i)(passport|id card|social security|bank account|iban|credit card)"),
+    re.compile(r"(?i)(?<![a-z])(passport|id card|social security|bank account|iban|credit card)(?![a-z])"),
     re.compile(r"(身份证|银行卡|护照号|学号|工号|社保号)"),
-    re.compile(r"(?i)(salary|net worth|debt|loan balance|income of)"),
+    re.compile(r"(?i)(?<![a-z])(salary|net worth|debt|loan balance|income of)(?![a-z])"),
     re.compile(r"(工资|年薪|存款|负债|贷款余额)"),
 )
 
 
 class Authority(str, Enum):
+    NONE = "none"                          # no standing to claim anything yet
     USER_EXPLICIT = "user-explicit"      # the user said it, in this channel
     USER_IMPLIED = "user-implied"        # reasonable inference from what the user said
     OBSERVED = "observed"                # the agent saw it happen (paths, tool output)
@@ -61,6 +64,7 @@ class Authority(str, Enum):
 
 
 class Evidence(str, Enum):
+    NONE = "none"
     QUOTE = "quote"                # verbatim from the source event
     PARAPHRASE = "paraphrase"      # reworded, same speaker
     SUMMARY = "summary"            # compressed account
@@ -69,8 +73,8 @@ class Evidence(str, Enum):
 
 class Lifecycle(str, Enum):
     STANDING = "standing"     # until revoked
-    PROJECT = "project-scoped"
-    EXPIRING = "expiring"
+    PROJECT = "project-scoped"  # valid only inside the scope recorded on the entry
+    EXPIRING = "expiring"     # carries an expiry date; the loader stops serving it
 
 
 VALID_LAYERS = ("A", "B", "C", "D")

@@ -1,4 +1,4 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # liu bai (留白) - a project by Liu Yinuo
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
@@ -18,11 +18,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from four_layer_memory import mcp, signing
+from four_layer_memory import approval, mcp, signing
 from four_layer_memory.audit import audit_store
 from four_layer_memory.handoff import Handoff
 from four_layer_memory.store import Entry, MemoryStore, StoreError
 from four_layer_memory.triggers import Action, decide
+import helpers
 
 
 def _root(tmp: str) -> Path:
@@ -88,10 +89,8 @@ class ReviewerProbeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = _root(tmp)
             store = MemoryStore(root)
-            entry = store.add(Entry("A", "REVIEW-P04: never mention the key.",
-                                    source="evt:4", authority="user-explicit",
-                                    evidence="quote", source_event_id="evt-4",
-                                    approved=True))
+            entry = helpers.add_a(store, "REVIEW-P04: never mention the key.",
+                                  "evt:4", "evt-4")
             self.assertIn("REVIEW-P04", store.path_for("A").read_text(encoding="utf-8"))
             result = store.revoke("evt-4")
             self.assertEqual(1, len(result.get("revoked", [])))
@@ -109,8 +108,10 @@ class ReviewerProbeTest(unittest.TestCase):
                             authority="user-explicit", evidence="paraphrase",
                             source_event_id="evt-5"))
             pending = store.quarantine_entries()
-            store.review(pending[0]["entry_id"], accept=True,
-                         token=str(pending[0]["approval_token"]))
+            record = approval.mint(store.root, entry_id=pending[0]["entry_id"],
+                                   text=pending[0]["text"],
+                                   source_event_id=pending[0].get("source_event_id", ""))
+            store.approve(pending[0]["entry_id"], record)
             result = store.revoke("evt-5")
             self.assertEqual(1, len(result.get("revoked", [])))
 
@@ -193,7 +194,10 @@ class ReviewerProbeTest(unittest.TestCase):
     # P12 - the scheduler cannot fold on its own; folding must be requested
     def test_p12_fold_requires_permission(self) -> None:
         self.assertEqual(Action.CONSOLIDATE, decide(0.46, entries_since=0))
-        self.assertEqual(Action.FOLD, decide(0.46, entries_since=0, allow_fold=True))
+        self.assertEqual(Action.CONSOLIDATE,
+                         decide(0.46, entries_since=0, allow_fold=True))
+        self.assertEqual(Action.FOLD,
+                         decide(0.46, entries_since=1, allow_fold=True))
 
     # P13 - sensitive text is quarantined even in a non-binding layer
     def test_p13_sensitive_text_quarantined(self) -> None:

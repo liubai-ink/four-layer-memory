@@ -31,7 +31,7 @@ def subcommands() -> list[str]:
     parser = argparse.ArgumentParser()
     del parser
     return ["init", "add", "consolidate", "status", "triggers", "plan", "handoff",
-            "quarantine", "keygen", "calibrate", "revoke", "audit", "export", "demo"]
+            "quarantine", "approve", "keygen", "calibrate", "revoke", "audit", "export", "demo"]
 
 
 class CliDispatchTest(unittest.TestCase):
@@ -55,7 +55,8 @@ class CliDispatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = str(Path(tmp) / "store")
             run_cli(["--root", root, "init"])
-            code, _ = run_cli(["--root", root, "add", "A", "Always answer in Chinese.", "--source", "m2"])
+            code, _ = run_cli(["--root", root, "add", "A", "Always answer in Chinese.",
+                               "--source", "m2", "--source-event", "evt-cli"])
             self.assertEqual(0, code)
             code, out = run_cli(["--root", root, "quarantine", "--list"])
             self.assertEqual(0, code)
@@ -63,9 +64,9 @@ class CliDispatchTest(unittest.TestCase):
             self.assertEqual(1, len(pending))
 
             entry_id = pending[0]["entry_id"]
-            token = str(pending[0]["approval_token"])
-            code, _ = run_cli(["--root", root, "quarantine", "--accept", entry_id,
-                               "--token", token])
+            # v0.7: the write side never receives approval material; the host
+            # channel records the decision.
+            code, _ = run_cli(["--root", root, "approve", entry_id])
             self.assertEqual(0, code)
             code, out = run_cli(["--root", root, "quarantine", "--list"])
             self.assertEqual([], json.loads(out), out)

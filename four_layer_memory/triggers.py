@@ -42,14 +42,19 @@ class Watermark:
 def decide(usage: float, turns_since: int = 0, entries_since: int = 0,
            cooldown_entries: int = 0, wm: Watermark | None = None,
            allow_fold: bool = False) -> Action:
-    """Return the action that should be taken *now*."""
+    """Return the action that should be taken *now*.
+
+    ``entries_since`` counts writes that have not yet been folded into the
+    layers.  Folding is allowed only when at least one entry is pending: a
+    mechanical fold that drops the only copy of a just-written entry is exactly
+    the failure this policy exists to prevent (v0.7 F01; the paper's "at least
+    one pending entry" now matches the code).
+    """
     wm = wm or Watermark()
     if usage >= wm.emergency_at:
         return Action.EMERGENCY
     if usage >= wm.fold_at:
-        # Mechanical folding only when the host asks for it *and* nothing is
-        # waiting to be written; otherwise consolidation comes first.
-        if allow_fold and entries_since == 0:
+        if allow_fold and entries_since > 0:
             return Action.FOLD
         return Action.CONSOLIDATE
     if entries_since >= cooldown_entries and usage >= wm.consolidate_at:

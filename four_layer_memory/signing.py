@@ -97,6 +97,60 @@ def has_key(root: str | pathlib.Path) -> bool:
     return _key_path(pathlib.Path(root)).exists()
 
 
+def has_public(root: str | pathlib.Path) -> bool:
+    return _pub_path(pathlib.Path(root)).exists()
+
+
+def material(root: str | pathlib.Path) -> dict:
+    """Describe which key material is available for verification.
+
+    ``private`` means signatures can be re-computed here (hmac needs the secret,
+    ed25519 needs the private key); ``public`` means only detached verification
+    of ed25519 records is possible.  An auditor that has neither must not report
+    a signed ledger as verified — that is the F05 fix in v0.7.
+    """
+    root = pathlib.Path(root)
+    if _key_path(root).exists():
+        return {"private": True, "public": _pub_path(root).exists(),
+                "alg": algorithm(root)}
+    if _pub_path(root).exists():
+        return {"private": False, "public": True, "alg": ED25519}
+    return {"private": False, "public": False, "alg": None}
+
+
+def verify_with_material(root: str | pathlib.Path, record: dict,
+                         mat: dict) -> tuple[bool, str]:
+    """Verify one record against available material; return (ok, reason).
+
+    Corrupt or unusable key material is a verification failure, never a pass:
+    an auditor must not treat "cannot check" as "checks out" (v0.7 F05).
+    """
+    sig = record.get("sig")
+    if not sig:
+        if mat.get("private") or mat.get("public"):
+            # A key is installed, so every record should be signed; an unsigned
+            # record is either an old unsigned record or a stripped signature.
+            return False, "signature missing"
+        return True, "unsigned"
+    alg = record.get("sig_alg")
+    root = pathlib.Path(root)
+    if mat.get("private"):
+        if mat.get("alg") != alg:
+            return False, f"signature algorithm {alg!r} does not match key material"
+        try:
+            expected = _sign_bytes(root, canonical_bytes(record))
+        except SigningError:
+            return False, "signing material present but unusable"
+        return hmac.compare_digest(sig, expected), "private material"
+    if mat.get("public"):
+        if alg != ED25519:
+            return False, "only public key material present; hmac records cannot be verified"
+        return verify_with_public(root, record), "public material"
+    return False, "signature present but no key material available"
+
+
+
+
 def algorithm(root: str | pathlib.Path) -> str | None:
     root = pathlib.Path(root)
     if not _key_path(root).exists():

@@ -36,9 +36,11 @@ irrelevant:
 | Anything inferred by the model, anything about health, identity, money, or anything whose authority you cannot state | quarantine | — | — |
 
 Layer A is the only layer that is *earned*: the write must carry an immutable
-source-event id and a human approval record. Everything else is quarantined with a
-one-time approval token; a human resolves it by accepting (with the token) or
-rejecting the entry, and accepted entries carry the approval in the ledger.
+source-event id and a **host approval record**. The model never mints approvals:
+`memory_review` can only reject, and acceptance is a host action
+(`four-layer-memory approve <entry_id>`). Everything else is quarantined with a
+reason; a human resolves it by rejecting the entry or by approving it on the host
+side, and accepted entries carry the approval in the ledger.
 
 Write the smallest text that still makes sense a month later, keep the source
 reference (message id, file, URL), and never copy the conversation in.
@@ -56,7 +58,7 @@ calibrate them, but it must then say so):
 | `watch` | ≥ 0.30 | sample every third turn |
 | `act` | ≥ 0.35 | check every turn, plan a break |
 | `forced` | ≥ 0.38 | consolidate at the next break; respect the cooldown |
-| `collapse` | ≥ 0.45 | fold is permitted **only after** a consolidation and only if at least one entry is pending |
+| `collapse` | ≥ 0.45 | fold is permitted only with explicit host permission, only after a consolidation, and only if at least one entry is pending |
 
 A cooldown (eight entries, default) prevents re-consolidating the same material:
 after a consolidation, the state returns to `watch` only when the cooldown has
@@ -71,7 +73,9 @@ cursor; a new session resumes from it, not from a transcript.
 
 - Do not treat provenance as truth: `source` records where a claim came from, not
   whether it is correct, and not who authorized it.
-- Do not let the model promote its own output into layer A.
+- Do not let the model promote its own output into layer A, and do not approve on
+  the model's behalf: `memory_review` rejects only.
 - Do not store secrets in any layer; the audit scans for key-shaped strings.
 - Do not let the store grow forever: D entries age out, old B entries move to an
-  archive, A entries never expire.
+  archive, A entries never expire (project-scoped and expiring entries are
+  withheld by the loader once their scope or date is over).

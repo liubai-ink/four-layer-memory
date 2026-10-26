@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WATERMARK = "liu bai"
 SKIP_SUFFIX = {".png", ".jpg", ".zip", ".pyc"}
 SKIP_FILES = {"LICENSE", "NOTICE", ".gitignore"}
+CACHE_PARTS = {".pytest_cache", ".ruff_cache", ".mypy_cache", ".tox", "build", "dist"}
 _BS = chr(92)
 SECRET = re.compile("sk-" + "[A-Za-z0-9_-]{16,}")
 USERPATH = re.compile("[A-Za-z]:" + _BS + _BS + "Users" + _BS + _BS + "|/home/[^/]+/")
@@ -33,6 +34,7 @@ def main() -> int:
     problems: list[str] = []
     files = [p for p in ROOT.rglob("*") if p.is_file() and p.suffix not in SKIP_SUFFIX
              and "__pycache__" not in p.parts and ".git" not in p.parts
+             and not any(part in CACHE_PARTS for part in p.parts)
              and not any(part.endswith(".egg-info") for part in p.parts)]
     for p in files:
         rel = p.relative_to(ROOT).as_posix()

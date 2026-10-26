@@ -50,7 +50,19 @@ layer, which forces compression and makes review possible.
 **Cursor-based handoff.** A new session or a different client resumes from a
 cursor, not from a transcript: read the records after `cursor_ref`, replay only
 the delta. If the cursor is lost, replay everything — favour redundancy over
-silent gaps.
+silent gaps. The handoff state is one cursor plus the ledger head; it is not a
+snapshot, and there is no second `handoff.json`.
+
+**Durable revocation.** A revocation is a tombstone in the ledger, not a flag in
+`state.json`: the loader recomputes the closure (`source_event_id` and transitive
+`derived_from`) on every read, so a lost state file or a stale handle cannot
+resurrect an entry, and a later re-approval of a revoked source is refused.
+
+**Host-side approval.** Layer A's authority is an out-of-band record signed with
+the host approval key, binding the entry id, its text digest, the source event and
+the `layer:A` scope. The model-facing tools cannot create one; the human promotes
+an entry with `four-layer-memory approve`.
+
 
 ## 4. Why pointers instead of retrieval
 

@@ -3,7 +3,12 @@
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 # ---------------------------------------------------------------------------
-"""Command line interface: init / add / consolidate / status / handoff / audit / demo."""
+"""Command line interface: init / add / approve / consolidate / status / audit / demo.
+
+The CLI is the *host channel*: approval of a quarantined claim lives here and is
+never exposed to the MCP write path, so an agent cannot approve its own claim
+(v0.7 F01).
+"""
 
 from __future__ import annotations
 
@@ -12,21 +17,39 @@ import json
 import sys
 from pathlib import Path
 
+from . import approval, signing
 from .audit import audit_store
 from .distill import Candidate, plan
 from .handoff import Handoff
 from .layers import Layer
-from . import signing
-from .store import Entry, MemoryStore
+from .store import DEFAULT_COOLDOWN_ENTRIES, Entry, MemoryStore, StoreError
 from .triggers import decide
 from .watermark import WATERMARK
+
+
+def _approvable(store: MemoryStore, entry_id: str) -> dict:
+    pending = [e for e in store.quarantine_entries() if e.get("entry_id") == entry_id]
+    if not pending:
+        raise StoreError(f"no quarantined entry {entry_id}")
+    return pending[0]
+
+
+def _approve(store: MemoryStore, entry_id: str, approver: str) -> dict:
+    found = _approvable(store, entry_id)
+    record = approval.mint(
+        store.root, entry_id=entry_id, text=str(found.get("text") or ""),
+        source_event_id=str(found.get("source_event_id") or ""), approver=approver,
+    )
+    return store.approve(entry_id, record, approver)
 
 
 def cmd_init(args) -> int:
     store = MemoryStore(args.root, session_id=getattr(args, "session", "unnamed"))
     info = signing.keygen(args.root)
+    approval.ensure_key(args.root)
     status = store.status()
     status["signing"] = {"alg": signing.algorithm(args.root), "created": info["created"]}
+    status["approval_fingerprint"] = approval.fingerprint(args.root)
     print(json.dumps(status, ensure_ascii=False, indent=2))
     return 0
 
@@ -49,18 +72,36 @@ def cmd_add(args) -> int:
             evidence=args.evidence,
             lifecycle=args.lifecycle,
             source_event_id=args.source_event,
-            approved=args.approved,
+            scope=getattr(args, "scope", "") or "",
+            expires_at=getattr(args, "expires_at", "") or "",
+            approved=False,  # a write never grants approval by itself
         )
     )
-    pending = [x for x in store.quarantine_entries() if x.get("text") == e.text]
+    pending = [x for x in store.quarantine_entries() if x.get("entry_id") == e.entry_id]
+    accepted = not pending
+    if pending and args.approved:
+        # --approved is the host exercising its own approval channel; the record
+        # is minted and verified exactly like an interactive approval.
+        _approve(store, e.entry_id, "cli")
+        accepted = True
+        pending = []
     print(json.dumps({"added": e.text, "layer": e.layer, "quarantined": bool(pending),
-                      "entry_id": e.entry_id, "watermark": WATERMARK}, ensure_ascii=False))
+                      "accepted": accepted, "entry_id": e.entry_id,
+                      "watermark": WATERMARK}, ensure_ascii=False))
+    return 0
+
+
+def cmd_approve(args) -> int:
+    store = MemoryStore(args.root)
+    result = _approve(store, args.entry_id, args.approver)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
 def cmd_consolidate(args) -> int:
     store = MemoryStore(args.root)
-    print(json.dumps(store.consolidate(args.anchor, args.usage, args.cooldown), ensure_ascii=False, indent=2))
+    print(json.dumps(store.consolidate(args.anchor, args.usage, args.cooldown),
+                     ensure_ascii=False, indent=2))
     return 0
 
 
@@ -90,15 +131,17 @@ def cmd_handoff(args) -> int:
         print(json.dumps(h.state.to_json()))
         return 0
     records = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    if args.report:
+        print(json.dumps(h.resume_report(records), ensure_ascii=False, indent=2))
+        return 0
     print(json.dumps(h.resume(records), ensure_ascii=False, indent=2))
     return 0
 
 
 def cmd_quarantine(args) -> int:
     store = MemoryStore(args.root)
-    if args.accept or args.reject:
-        result = store.review(args.accept or args.reject, accept=bool(args.accept),
-                              token=args.token)
+    if args.reject:
+        result = store.review(args.reject, accept=False)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     if args.list:
@@ -144,8 +187,12 @@ def cmd_demo(args) -> int:
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         store = MemoryStore(td, session_id="demo")
+        signing.keygen(td)
+        approval.ensure_key(td)
         store.add(Entry("A", "Always keep provenance on every memory entry.", "demo:m1",
-                       authority="user-explicit", evidence="quote"))
+                        authority="user-explicit", evidence="quote",
+                        source_event_id="demo:evt"))
+        _approve(store, store.quarantine_entries()[0]["entry_id"], "demo")
         store.add(Entry("B", "Prefer tables over paragraphs in comparisons.", "demo:m2"))
         store.add(Entry("C", "The corpus is queried with corpus_query.py.", "demo:m3"))
         store.add(Entry("D", "The project started on 2026-10-19.", "demo:m4"))
@@ -170,19 +217,26 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("text")
     a.add_argument("--source", required=True)
     a.add_argument("--authority", default="inferred",
-                   choices=["user-explicit", "user-implied", "observed", "inferred", "model-generated"])
+                   choices=["user-explicit", "user-implied", "observed", "inferred",
+                            "model-generated", "none"])
     a.add_argument("--evidence", default="summary",
-                   choices=["quote", "paraphrase", "summary", "inference"])
+                   choices=["quote", "paraphrase", "summary", "inference", "none"])
     a.add_argument("--lifecycle", default="standing",
                    choices=["standing", "project-scoped", "expiring"])
     a.add_argument("--source-event", default="")
+    a.add_argument("--scope", default="")
+    a.add_argument("--expires-at", default="")
     a.add_argument("--approved", action="store_true",
-                   help="record that a human approved this write (required for layer A)")
+                   help="host approval of this write in the same call (layer A)")
+
+    ap = sub.add_parser("approve")
+    ap.add_argument("entry_id")
+    ap.add_argument("--approver", default="host")
 
     c = sub.add_parser("consolidate")
     c.add_argument("--anchor", required=True)
     c.add_argument("--usage", type=float, required=True)
-    c.add_argument("--cooldown", type=int, default=50)
+    c.add_argument("--cooldown", type=int, default=DEFAULT_COOLDOWN_ENTRIES)
 
     sub.add_parser("status")
 
@@ -199,13 +253,11 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--state", default=".memory/handoff.json")
     h.add_argument("--mark", default="")
     h.add_argument("--file", default="")
+    h.add_argument("--report", action="store_true")
 
     q = sub.add_parser("quarantine")
-    q.add_argument("--accept", default="")
     q.add_argument("--reject", default="")
     q.add_argument("--list", action="store_true")
-    q.add_argument("--token", default="",
-                   help="approval token shown when the entry was quarantined")
 
     kg = sub.add_parser("keygen")
     kg.add_argument("--alg", choices=["hmac-sha256", "ed25519"], default="hmac-sha256")
@@ -228,12 +280,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = p.parse_args(argv)
     fn = {
-        "init": cmd_init, "add": cmd_add, "consolidate": cmd_consolidate,
-        "status": cmd_status, "triggers": cmd_triggers, "plan": cmd_plan,
-        "handoff": cmd_handoff, "audit": cmd_audit, "export": cmd_export,
-        "keygen": cmd_keygen, "quarantine": cmd_quarantine,
-        "calibrate": cmd_calibrate, "revoke": cmd_revoke,
-        "demo": cmd_demo,
+        "init": cmd_init, "add": cmd_add, "approve": cmd_approve,
+        "consolidate": cmd_consolidate, "status": cmd_status,
+        "triggers": cmd_triggers, "plan": cmd_plan, "handoff": cmd_handoff,
+        "audit": cmd_audit, "export": cmd_export, "keygen": cmd_keygen,
+        "quarantine": cmd_quarantine, "calibrate": cmd_calibrate,
+        "revoke": cmd_revoke, "demo": cmd_demo,
     }[args.cmd]
     return fn(args)
 

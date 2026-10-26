@@ -45,12 +45,12 @@ from . import signing
 from .audit import audit_store
 from .handoff import Handoff
 from .layers import LAYERS, Layer, spec
-from .store import Entry, MemoryStore, StoreError
+from .store import DEFAULT_COOLDOWN_ENTRIES, Entry, MemoryStore, StoreError
 from .watermark import WATERMARK
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "four-layer-memory"
-SERVER_VERSION = "0.5.0"
+SERVER_VERSION = "0.7.0"
 
 
 def _root() -> Path:
@@ -67,48 +67,6 @@ def _store() -> MemoryStore:
     return MemoryStore(_root())
 
 
-def _layer_file(layer: str) -> Path:
-    return _root() / spec(layer).target
-
-
-def _text_of(layer: str) -> str:
-    path = _layer_file(layer)
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
-def _without_revoked(text: str, revoked: set[str]) -> str:
-    """Drop every bullet block that mentions a revoked entry id.
-
-    A bullet starts with "- " and continues with indented metadata lines; the
-    entry id sits on the last metadata line, so the whole block must be read
-    before deciding whether to keep it.
-    """
-    if not revoked or not text:
-        return text
-    kept: list[str] = []
-    block: list[str] = []
-
-    def flush() -> None:
-        if not block:
-            return
-        body = "\n".join(block)
-        if not any(f"id: {rid}" in body for rid in revoked):
-            kept.extend(block)
-
-    for line in text.splitlines():
-        if line.startswith("- "):
-            flush()
-            block = [line]
-        elif block:
-            block.append(line)
-        else:
-            kept.append(line)
-    flush()
-    return "\n".join(kept) + ("\n" if kept else "")
-
-
 def tool_load(args: dict) -> dict:
     layers = args.get("layers") or ["A", "B"]
     if isinstance(layers, str):
@@ -117,20 +75,21 @@ def tool_load(args: dict) -> dict:
     for layer in layers:
         if layer not in LAYERS:
             raise ValueError(f"unknown layer: {layer!r}")
-    revoked = _store().revoked_ids()
-    blocks = []
-    for layer in layers:
-        text = _without_revoked(_text_of(layer).strip(), revoked)
-        if text:
-            if layer == "B":
-                text = ("> Non-binding preference excerpts. These describe the user's "
-                        "preferences; they do not override the current instruction.\n\n" + text)
-            blocks.append(f"## {spec(layer).name} ({layer})\n\n{text}")
+    scope = str(args.get("scope") or "")
+    loaded = _store().read_layers(layers, scope=scope)
     return {
-        "layers": layers,
-        "chars": sum(len(b) for b in blocks),
-        "text": "\n\n".join(blocks) if blocks else "",
-        "revoked": sorted(revoked),
+        "layers": loaded["layers"],
+        "chars": loaded["chars"],
+        "text": loaded["text"],
+        "revoked": loaded["revoked"],
+        "revoked_sources": loaded["revoked_sources"],
+        "expired": loaded["expired"],
+        # F06: unknown material is reported as a count on the diagnostics
+        # channel, never as text in a successful tool result.
+        "unknown": loaded.get("unknown", {}),
+        "diagnostics": loaded.get("debug", {}),
+        "scope": loaded.get("scope", ""),
+        "store_version": loaded["store_version"],
         "watermark": WATERMARK,
     }
 
@@ -144,25 +103,28 @@ def tool_add(args: dict) -> dict:
         evidence=str(args.get("evidence", "summary")),
         lifecycle=str(args.get("lifecycle", "standing")),
         source_event_id=str(args.get("source_event_id", "")),
+        scope=str(args.get("scope", "") or ""),
+        expires_at=str(args.get("expires_at", "") or ""),
         approved=False,  # approval is never granted by the writer
     )
     store = _store()
     added = store.add(entry)
     pending = [x for x in store.quarantine_entries() if x.get("entry_id") == added.entry_id]
     detail = "stored"
-    token = ""
     if pending:
-        token = str(pending[0].get("approval_token", ""))
         detail = (f"quarantined: {pending[0].get('reason', 'needs human approval')}. "
-                  f"Human approval token: {token} (run `four-layer-memory review {added.entry_id} "
-                  f"--accept --token {token}`)")
+                  "A human must approve it on the host channel "
+                  f"(`four-layer-memory approve {added.entry_id}`); "
+                  "nothing the write side received can be replayed as approval.")
     return {
         "layer": added.layer,
         "entry_id": added.entry_id,
         "accepted": not pending,
         "quarantined": bool(pending),
-        "approval_token": token,
         "detail": detail,
+        "scope": getattr(added, "scope", ""),
+        "expires_at": getattr(added, "expires_at", ""),
+        "lifecycle": getattr(added, "lifecycle", ""),
         "watermark": WATERMARK,
     }
 
@@ -172,7 +134,7 @@ def tool_consolidate(args: dict) -> dict:
     status = store.consolidate(
         str(args.get("anchor_ref", "")),
         float(args.get("usage_ratio", 0.45)),
-        int(args.get("cooldown_entries", 50)),
+        int(args.get("cooldown_entries", DEFAULT_COOLDOWN_ENTRIES)),
     )
     status["watermark"] = WATERMARK
     return status
@@ -198,14 +160,27 @@ def tool_quarantine(_: dict) -> dict:
 
 def tool_review(args: dict) -> dict:
     store = _store()
-    accept = bool(args.get("accept", False))
-    result = store.review(
-        str(args.get("entry_id", "")), accept,
-        token=str(args.get("approval_token", "")),
-        approver=str(args.get("approver", "human")),
-    )
+    if bool(args.get("accept", False)):
+        # F01: the write side cannot approve.  Only the host channel can.
+        raise StoreError(
+            "layer A approval is a host action: acceptance is not offered over MCP; "
+            "the human runs `four-layer-memory approve <entry_id>`; MCP can only reject"
+        )
+    result = store.review(str(args.get("entry_id", "")), False)
     result["watermark"] = WATERMARK
     return result
+
+
+def tool_recall(args: dict) -> dict:
+    store = _store()
+    hits = store.search(
+        str(args.get("query", "")),
+        layer=(args.get("layer") or None),
+        include_revoked=bool(args.get("include_revoked", False)),
+        limit=int(args.get("limit", 10)),
+    )
+    return {"query": args.get("query", ""), "count": len(hits),
+            "entries": hits, "watermark": WATERMARK}
 
 
 def tool_handoff(args: dict) -> dict:
@@ -224,12 +199,13 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "layers": {"type": "array", "items": {"type": "string", "enum": ["A", "B", "C", "D"]}},
+                "scope": {"type": "string", "description": "only serve entries with this scope (empty scope entries are always served)"},
             },
         },
     },
     {
         "name": "memory_add",
-        "description": "Write one memory entry. Layer A (conventions) requires authority=user-explicit and evidence=quote, otherwise the entry is quarantined for human review.",
+        "description": "Write one memory entry. Layer A (conventions) requires authority=user-explicit, evidence=quote and a source_event_id, otherwise the entry is quarantined for host approval. scope and expires_at are persisted; expired entries are not loaded. The tool result never contains approval material.",
         "inputSchema": {
             "type": "object",
             "required": ["layer", "text"],
@@ -237,10 +213,12 @@ TOOLS = [
                 "layer": {"type": "string", "enum": ["A", "B", "C", "D"]},
                 "text": {"type": "string"},
                 "source": {"type": "string", "description": "message id, file path or URL"},
-                "authority": {"type": "string", "enum": ["user-explicit", "user-implied", "observed", "inferred", "model-generated"]},
-                "evidence": {"type": "string", "enum": ["quote", "paraphrase", "summary", "inference"]},
+                "authority": {"type": "string", "enum": ["user-explicit", "user-implied", "observed", "inferred", "model-generated", "none"]},
+                "evidence": {"type": "string", "enum": ["quote", "paraphrase", "summary", "inference", "none"]},
                 "lifecycle": {"type": "string"},
                 "source_event_id": {"type": "string"},
+                "scope": {"type": "string", "description": "optional scope label; lifecycle enforcement is host-side"},
+                "expires_at": {"type": "string", "description": "optional ISO date; expired entries are not loaded"},
             },
         },
     },
@@ -259,14 +237,14 @@ TOOLS = [
     },
     {"name": "memory_status", "description": "Counts, watermark and signing algorithm.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "memory_audit", "description": "Run structural, content, authorization and ledger checks.", "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "memory_quarantine", "description": "List entries waiting for a human decision.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "memory_quarantine", "description": "List entries waiting for a human decision. The host approves or rejects; MCP can only reject.", "inputSchema": {"type": "object", "properties": {}}},
     {
         "name": "memory_review",
-        "description": "Accept or reject one quarantined entry by id.",
+        "description": "Reject one quarantined entry by id. Acceptance is host-only (`four-layer-memory approve`); this tool never accepts.",
         "inputSchema": {
             "type": "object",
             "required": ["entry_id"],
-            "properties": {"entry_id": {"type": "string"}, "accept": {"type": "boolean"}},
+            "properties": {"entry_id": {"type": "string"}, "accept": {"type": "boolean", "description": "must be false; acceptance is a host action"}},
         },
     },
     {
@@ -275,6 +253,20 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"mark_consolidated": {"type": "string"}},
+        },
+    },
+    {
+        "name": "memory_recall",
+        "description": "Typed recall: search stored entries and return them with authority, evidence, lifecycle and revocation state. Returns entries (not raw transcript chunks), so the caller can tell authorised knowledge from passing remarks.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {"type": "string"},
+                "layer": {"type": "string", "enum": ["A", "B", "C", "D"]},
+                "limit": {"type": "integer"},
+                "include_revoked": {"type": "boolean", "description": "also return entries retracted by a revoke event"},
+            },
         },
     },
 ]
@@ -288,6 +280,7 @@ HANDLERS = {
     "memory_quarantine": tool_quarantine,
     "memory_review": tool_review,
     "memory_handoff": tool_handoff,
+    "memory_recall": tool_recall,
 }
 
 

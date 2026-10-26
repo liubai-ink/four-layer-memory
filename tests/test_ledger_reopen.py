@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from four_layer_memory import approval
 from four_layer_memory.store import Entry, MemoryStore
 
 
@@ -42,17 +43,20 @@ class LedgerReopenTest(unittest.TestCase):
                     source="test:3",
                     authority="user-explicit",
                     evidence="paraphrase",
+                    source_event_id="evt-3",
                 )
             )
             self.assertEqual(1, store.quarantined())
 
             reopened = MemoryStore(root)
             pending_entries = reopened.quarantine_entries()
-            reopened.review(
-                pending_entries[0]["entry_id"],
-                accept=True,
-                token=str(pending_entries[0]["approval_token"]),
+            record = approval.mint(
+                root,
+                entry_id=pending_entries[0]["entry_id"],
+                text=pending_entries[0]["text"],
+                source_event_id=pending_entries[0].get("source_event_id", ""),
             )
+            reopened.approve(pending_entries[0]["entry_id"], record)
 
             integrity = reopened.ledger_integrity()
             self.assertTrue(integrity["ok"], integrity)
