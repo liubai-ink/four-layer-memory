@@ -36,8 +36,11 @@ Windows 上若 `python` 不在 PATH，可用 `py -3` 代替。
 
 1. **写一条偏好（B 层）**
    ```bash
-   python -m four_layer_memory add B "报告先给结论，再给依据" --source chat:2026-10-26
+   python -m four_layer_memory add B "报告先给结论，再给依据" --source chat:2026-10-26 \
+       --authority user-explicit --evidence quote
    ```
+   > 不带 `--authority/--evidence` 时，默认按「推断/摘要」处理，会被放进**隔离区**而不是直接收下——
+   > 这是设计：你没说"这是我说过的原话"，它就不替你升格。反过来，带了这两个参数才是你认账。
 2. **写一条硬性约定（A 层）——会发现它不让你直接写**
    ```bash
    python -m four_layer_memory add A "未经我确认，不得修改项目根目录" --source chat:2026-10-26
