@@ -35,6 +35,22 @@ deterministically, and it must never crowd out A or B.
 The separation is load-bearing: mixing layers means a retrieval for "how do I
 format a table" can pull in a month of health updates.
 
+## 2.5 The archive (not a layer)
+
+Alongside the four layers the store keeps `archive/events.jsonl`: an
+append-only, hash-chained record of the raw text behind every decision. It is
+deliberately **outside** the typed substrate:
+
+- it is never loaded with `memory_load`, so it cannot crowd the context;
+- it is never injected, so it cannot act as an untyped back door;
+- it is never exported in a bundle, so a handoff stays small;
+- it is written *before* the layer file is materialised, so a crash cannot lose
+  the decision (recovery marks such captures `reconstructed`);
+- `audit` verifies the chain and requires a capture for every served entry.
+
+The layers answer "what should the model see"; the archive answers "what was
+actually written, and by whom" when a human needs to check the record.
+
 ## 3. Three mechanisms
 
 **Watermark triggers.** The agent knows the context usage *from the host*, not

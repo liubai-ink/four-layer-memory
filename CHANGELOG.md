@@ -2,6 +2,76 @@
 
 # Changelog
 
+## 0.7.3 (unreleased) - 2026-10-28
+
+### Revoked entries no longer fail the audit
+
+`revoke()` writes a tombstone and leaves the original `write`/`approve` records
+in the ledger, by design — the ledger is a replay log. The authorization check,
+however, re-verified every A-layer `approve` record in the ledger, including
+entries that had already been revoked. A store that migrated a legacy entry
+(revoke the old one, write a signed replacement) therefore stayed permanently
+red: the old record lacked an approval record and would never gain one.
+
+- `audit.py`: before re-verifying an `approve`/`write` record, skip it when its
+  `entry_id` (or `source_event_id`) is in the revoked closure; report the count
+  under `authorization.revoked_skipped`. Revocation is terminal for auditing:
+  the tombstone is what the audit sees, not the superseded record.
+- `tests/__init__.py`: added the package marker, so the suite runs with plain
+  `python -m pytest -q` (relative imports in four test modules had made
+  collection fail). 88 tests pass.
+
+### Compaction: remove revoked blocks from the layer files
+
+`revoke()` tombstones a decision but never touched the layer files, so a store
+that migrated entries kept both the dead text and the live replacement in the
+same file forever — the file grew, and the audit's structural check compared
+counts against a file that still contained revoked blocks.
+
+- `store.compact(apply=False, layers=None)`: the layer file is rebuilt from the
+  ledger, dropping every block inside the revoked closure (by `entry_id`,
+  `source_event_id`, or `derived_from`). Dry-run by default; `_guard_bytes`
+  refuses to write when the on-disk file diverges from what the ledger predicts;
+  a timestamped backup is taken before the atomic replace, and the ledger gets a
+  `compact` event carrying `dropped_ids`, `before_sha256`, `after_sha256`, so the
+  rewrite itself is replayable and auditable.
+- `expected_layers()` / `_layer_from_ledger()` skip dropped ids, so a second
+  compaction sees the predicted bytes, not the pre-compaction ones.
+- `state.layer_counts` is now recomputed from the physical files
+  (`_physical_counts()`) in `recover()`/`revoke()`, not from the ledger (a ledger
+  count never subtracts revocations).
+- `cli`: `compact` subcommand with `--apply`, `--layer`, `--audit-after`.
+- `tests/test_compact.py`: 6 tests (dry-run leaves files untouched; apply drops
+  only revoked blocks, keeps the audit green, is idempotent, and the servable set
+  is correct; no revocations => no-op; a hand-edited file is refused; `--layer`
+  limits scope; CLI path). 94 tests pass.
+
+Measured on this machine's real store: conventions.md went from 13 blocks to 6,
+`audit` returned `ok=True` with `revoked_skipped=12`.
+
+## 0.7.2 - 2026-10-28
+
+### The archive: raw text behind every decision, never served
+
+A fifth destination that never enters the working set, shaped after a sibling
+system's "full card" but kept inside the typed substrate.
+
+- **`archive/events.jsonl`** - append-only, one line per decision (`write`,
+  `approve`, `revoke`, `reconstructed`), each carrying `prev_sha256`; the raw
+  text is kept verbatim so the original wording behind a typed entry survives.
+  The archive is not a layer: never loaded, never injected, never exported.
+- **Capture before materialisation.** The decision is archived right after the
+  ledger's `write` record and before the layer file is written, so a crash in
+  between leaves an archive that already covers the decision; recovery marks
+  such events `reconstructed` rather than pretending nothing was lost.
+- **Coverage is audited.** `audit` gains an `archive` block: the chain must
+  verify and every served write/approve must have a capture
+  (`archive_missing_capture` / `archive_chain_broken` / `archive_error`).
+- **Two tools, no approval rights.** `memory_archive_search` (FTS5, optional
+  `include_revoked`) and `memory_archive_verify` (chain + coverage). Neither can
+  write, approve or inject.
+- Tests: `tests/test_archive.py` (eight cases); full suite 88 tests.
+
 ## 0.7.1 - 2026-10-26
 
 ### Fourth review: closable gaps, one contract change (v0.7.1)

@@ -169,10 +169,40 @@ def cmd_revoke(args) -> int:
     return 0
 
 
+def cmd_archive_search(args) -> int:
+    store = _store(args)
+    hits = store.archive.search(args.query, limit=args.limit,
+                                include_revoked=not args.exclude_revoked)
+    print(json.dumps({"query": args.query, "count": len(hits), "entries": hits},
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_archive_verify(args) -> int:
+    store = _store(args)
+    report = store.archive.verify()
+    print(json.dumps({"ok": report["ok"], "events": report["count"],
+                      "problems": report["problems"],
+                      "stats": store.archive.stats()},
+                     ensure_ascii=False, indent=2))
+    return 0 if report["ok"] else 1
+
+
 def cmd_audit(args) -> int:
     report = audit_store(args.root)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["ok"] else 1
+
+
+def cmd_compact(args) -> int:
+    store = MemoryStore(args.root)
+    layers = [x.strip().upper() for x in (args.layer or []) if x.strip()] or None
+    report = store.compact(apply=args.apply, layers=layers)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.audit_after and args.apply:
+        after = audit_store(args.root)
+        return 0 if after["ok"] else 1
+    return 0
 
 
 def cmd_export(args) -> int:
@@ -268,10 +298,24 @@ def main(argv: list[str] | None = None) -> int:
     cal.add_argument("--out", default="")
     cal.add_argument("--fold", type=float, default=0.45)
     cal.add_argument("--emergency", type=float, default=0.95)
+    asr = sub.add_parser("archive-search")
+    asr.add_argument("query")
+    asr.add_argument("--limit", type=int, default=10)
+    asr.add_argument("--exclude-revoked", action="store_true")
+    asr.set_defaults(func=cmd_archive_search)
+    sub.add_parser("archive-verify").set_defaults(func=cmd_archive_verify)
     rv = sub.add_parser("revoke")
     rv.add_argument("source_event")
 
     sub.add_parser("audit")
+
+    cp = sub.add_parser("compact")
+    cp.add_argument("--apply", action="store_true",
+                    help="rewrite the layer files (default: dry-run)")
+    cp.add_argument("--layer", action="append", default=[],
+                    help="limit to layer A/B/C/D (repeatable)")
+    cp.add_argument("--audit-after", action="store_true",
+                    help="run the audit after applying and fail if it is not ok")
 
     e = sub.add_parser("export")
     e.add_argument("--out", required=True)
@@ -285,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         "triggers": cmd_triggers, "plan": cmd_plan, "handoff": cmd_handoff,
         "audit": cmd_audit, "export": cmd_export, "keygen": cmd_keygen,
         "quarantine": cmd_quarantine, "calibrate": cmd_calibrate,
-        "revoke": cmd_revoke, "demo": cmd_demo,
+        "revoke": cmd_revoke, "demo": cmd_demo, "compact": cmd_compact,
     }[args.cmd]
     return fn(args)
 

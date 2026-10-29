@@ -1,6 +1,6 @@
 # 试用问题清单（5 分钟就能填）
 
-项目：Four Layers of Memory（v0.7.1）— 给长会话 AI 的记忆底座
+项目：Four Layers of Memory（v0.7.2）— 给长会话 AI 的记忆底座
 试用者：
 日期：
 系统 / Python 版本：

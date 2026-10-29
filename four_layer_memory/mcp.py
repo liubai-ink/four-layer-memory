@@ -50,7 +50,7 @@ from .watermark import WATERMARK
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "four-layer-memory"
-SERVER_VERSION = "0.7.1"
+SERVER_VERSION = "0.7.3"
 
 
 def _root() -> Path:
@@ -183,6 +183,27 @@ def tool_recall(args: dict) -> dict:
             "entries": hits, "watermark": WATERMARK}
 
 
+def tool_archive_search(args: dict) -> dict:
+    """Keyword search over the local raw archive (never injected)."""
+    store = _store()
+    hits = store.archive.search(
+        str(args.get("query", "")),
+        limit=int(args.get("limit", 10)),
+        include_revoked=bool(args.get("include_revoked", True)),
+    )
+    return {"query": args.get("query", ""), "count": len(hits),
+            "entries": hits, "watermark": WATERMARK}
+
+
+def tool_archive_verify(args: dict) -> dict:
+    """Verify the archive hash chain (tamper evidence) and basic counts."""
+    store = _store()
+    report = store.archive.verify()
+    return {"ok": report["ok"], "events": report["count"],
+            "problems": report["problems"], "stats": store.archive.stats(),
+            "watermark": WATERMARK}
+
+
 def tool_handoff(args: dict) -> dict:
     handoff = Handoff(_root() / "handoff.json")
     after_ref = args.get("mark_consolidated")
@@ -256,6 +277,24 @@ TOOLS = [
         },
     },
     {
+        "name": "memory_archive_search",
+        "description": "Search the local append-only raw archive by keyword. The archive is never injected into the conversation; use it to recover the original text behind a typed entry. Returns revoked flags.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer"},
+                "include_revoked": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "memory_archive_verify",
+        "description": "Verify the raw archive hash chain and report event counts. A broken chain means a line was deleted or rewritten.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "memory_recall",
         "description": "Typed recall: search stored entries and return them with authority, evidence, lifecycle and revocation state. Returns entries (not raw transcript chunks), so the caller can tell authorised knowledge from passing remarks.",
         "inputSchema": {
@@ -280,6 +319,8 @@ HANDLERS = {
     "memory_quarantine": tool_quarantine,
     "memory_review": tool_review,
     "memory_handoff": tool_handoff,
+    "memory_archive_search": tool_archive_search,
+    "memory_archive_verify": tool_archive_verify,
     "memory_recall": tool_recall,
 }
 

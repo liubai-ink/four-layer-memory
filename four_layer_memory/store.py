@@ -1,4 +1,4 @@
-# ---------------------------------------------------------------------------
+﻿# ---------------------------------------------------------------------------
 # liu bai (留白) - a project by Liu Yinuo
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
@@ -45,6 +45,7 @@ from pathlib import Path
 
 from . import admission
 from . import approval
+from . import archive as archive_mod
 from . import signing
 from .layers import Layer, spec
 from .watermark import WATERMARK
@@ -216,6 +217,10 @@ class State:
     # rewound outside the store and everything is blocked until restored.
     ledger_head: str = ""
     truncated: dict = field(default_factory=dict)
+    # v0.7.2: mirror of the local raw archive (never served, opt-in recall).
+    archive_events: int = 0
+    archive_last_sha256: str = ""
+    archive_error: str = ""
     store_version: str = STORE_FORMAT
     watermark: str = WATERMARK
 
@@ -271,6 +276,7 @@ class MemoryStore:
         if not self.ledger_path.exists():
             self.ledger_path.write_text("", encoding="utf-8")
         self.lock_path = self.root / ".lock"
+        self.archive = archive_mod.Archive(self.root)
         if alg:
             if not signing.has_key(self.root):
                 signing.keygen(self.root, alg=alg)
@@ -753,6 +759,23 @@ class MemoryStore:
                     counts[name] = counts.get(name, 0) + 1
         return counts
 
+    def _physical_counts(self) -> dict[str, int]:
+        """Bullets actually present in each layer file (tombstones included).
+
+        ``state.layer_counts`` tracks the file, not the served set: audit's
+        structural check compares it with the bullet count, and revocation is a
+        tombstone that deliberately stays in the file until ``compact``.
+        """
+        names = {layer.value: spec(layer).name for layer in Layer}
+        counts = {name: 0 for name in names.values()}
+        for layer in Layer:
+            path = self.path_for(layer)
+            if not path.exists():
+                continue
+            blocks, _unknown = self.parse_layer_text(path.read_text(encoding="utf-8"))
+            counts[names[layer.value]] = len(blocks)
+        return counts
+
     def _find_record(self, entry_id: str, records: list[dict] | None = None) -> dict | None:
         for rec in (records if records is not None else self.ledger_records()):
             if rec.get("event") in ("write", "approve") and rec.get("entry_id") == entry_id:
@@ -765,24 +788,46 @@ class MemoryStore:
         return any(r.get("event") == "bind" and r.get("tx") == tx
                    for r in (records if records is not None else self.ledger_records()))
 
-    def expected_layers(self) -> dict[str, str]:
-        """Expected bytes of each layer file, rebuilt from the ledger (F04)."""
-        out: dict[str, str] = {}
-        records = self.ledger_records()
-        names = {layer.value: layer for layer in Layer}
-        for layer in Layer:
-            text = self._header(layer)
-            for rec in records:
-                if rec.get("event") not in ("write", "approve"):
-                    continue
-                if str(rec.get("layer", "")).upper() != layer.value:
-                    continue
-                if rec.get("tx") and not self._tx_bound(str(rec["tx"]), records):
-                    continue
-                entry = Entry.from_record(rec)
-                text = self._append_bullet(text, entry)
-            out[layer.value] = text
+    def _dropped_ids(self, records: list[dict] | None = None) -> dict[str, set[str]]:
+        """Entry ids physically compacted out of each layer (from ``compact`` events)."""
+        out: dict[str, set[str]] = {}
+        for rec in (records if records is not None else self.ledger_records()):
+            if rec.get("event") != "compact":
+                continue
+            key = str(rec.get("layer", "")).upper()
+            out.setdefault(key, set()).update(str(x) for x in rec.get("dropped_ids") or [])
         return out
+
+    def _layer_from_ledger(self, layer: Layer, records: list[dict],
+                           skip_ids: set[str] | None = None) -> str:
+        """Rebuild one layer file's bytes from its write/approve records."""
+        skipped = skip_ids or set()
+        text = self._header(layer)
+        for rec in records:
+            if rec.get("event") not in ("write", "approve"):
+                continue
+            if str(rec.get("layer", "")).upper() != layer.value:
+                continue
+            if rec.get("tx") and not self._tx_bound(str(rec["tx"]), records):
+                continue
+            if str(rec.get("entry_id")) in skipped:
+                continue
+            entry = Entry.from_record(rec)
+            text = self._append_bullet(text, entry)
+        return text
+
+    def expected_layers(self) -> dict[str, str]:
+        """Expected bytes of each layer file, rebuilt from the ledger (F04).
+
+        ``compact`` events name entries that were physically dropped from a file;
+        they stay in the ledger for replay, so they are skipped here as well.
+        """
+        records = self.ledger_records()
+        dropped = self._dropped_ids(records)
+        return {
+            layer.value: self._layer_from_ledger(layer, records, dropped.get(layer.value, set()))
+            for layer in Layer
+        }
 
     def _append_locked(self, entry: Entry, text: str | None = None) -> None:
         path = self.path_for(entry.layer)
@@ -848,6 +893,33 @@ class MemoryStore:
         if not approval.verify(self.root, record):
             raise StoreError("approval record does not verify with the host key")
 
+    # -- archive -----------------------------------------------------------
+    def _archive_append(self, kind: str, entry: "Entry", reason: str = "") -> None:
+        """Append the raw text of a write/approve/revoke to the local archive.
+
+        The archive is not served: it exists so that a human (or a later
+        session) can recover the original text behind a typed entry.  Failures
+        here must not break the write path, so they are surfaced through
+        ``status()["archive_error"]`` instead of raising.
+        """
+        try:
+            self.archive.append(
+                kind=kind,
+                entry_id=entry.entry_id,
+                layer=str(entry.layer),
+                text=entry.text,
+                source=entry.source or "",
+                source_event_id=entry.source_event_id or "",
+                authority=entry.authority or "",
+                evidence=entry.evidence or "",
+                scope=getattr(entry, "scope", "") or "",
+                extra={"reason": reason, "tags": list(entry.tags or [])},
+            )
+            self.state.archive_events = self.archive.count
+            self.state.archive_last_sha256 = self.archive.last_sha256
+        except Exception as exc:  # pragma: no cover - defensive
+            self.state.archive_error = f"{type(exc).__name__}: {exc}"
+
     def add(self, entry: Entry, approval_record: dict | None = None) -> Entry:
         """Validate, decide, then commit ledger -> layer -> state under one lock.
 
@@ -908,6 +980,9 @@ class MemoryStore:
                 "layer_sha256_expected": _sha(payload),
                 "reason": decision.reason,
             })
+            # the archive records the decision, so it must survive a crash
+            # between the ledger write and the layer materialisation.
+            self._archive_append(event, entry, decision.reason)
             self._append_locked(entry, payload)
             self._ledger({
                 "event": "bind",
@@ -977,6 +1052,7 @@ class MemoryStore:
                         "layer_sha256_expected": _sha(payload),
                         "reason": decision.reason,
                     })
+                    self._archive_append(event, entry, decision.reason)
                     self._append_locked(entry, payload)
                     self._ledger({
                         "event": "bind",
@@ -1181,6 +1257,7 @@ class MemoryStore:
                 "layer_sha256_expected": _sha(payload),
                 "reason": decision.reason,
             })
+            self._archive_append("approve", entry, decision.reason)
             self._append_locked(entry, payload)
             self._ledger({
                 "event": "bind",
@@ -1275,6 +1352,20 @@ class MemoryStore:
             tentative = {"event": "revoke", "source_event_id": source_event_id,
                          "entry_ids": []}
             hits, sources = self._closure([*records, tentative])
+            entry_by_id = {r.get("entry_id"): r for r in records
+                           if r.get("event") in ("write", "approve")}
+            for eid in sorted(hits):
+                rec = entry_by_id.get(eid)
+                if rec is None:
+                    continue
+                tomb = Entry(
+                    layer=Layer(str(rec.get("layer") or "D")),
+                    text=str(rec.get("text") or ""),
+                    source=str(rec.get("source") or ""),
+                    source_event_id=str(rec.get("source_event_id") or ""),
+                    entry_id=eid,
+                )
+                self._archive_append("revoke", tomb, "source event revoked")
             self._ledger(
                 {
                     "event": "revoke",
@@ -1285,7 +1376,7 @@ class MemoryStore:
             )
             ids, sources = self.revoked_sets()
             self.state.revoked = sorted(ids)
-            self.state.layer_counts = self._counts_from_ledger()
+            self.state.layer_counts = self._physical_counts()
             self._save_state()
         return {"source_event_id": source_event_id, "revoked": sorted(hits),
                 "revoked_total": sorted(ids), "revoked_sources": sorted(sources)}
@@ -1295,6 +1386,10 @@ class MemoryStore:
         """Repair one write/approve transaction whose bind is missing (F03)."""
         entry = Entry.from_record(rec)
         layer = str(rec.get("layer", "")).upper()
+        # the decision log must cover recovered transactions as well; the event
+        # is marked reconstructed so an auditor can tell it apart.
+        if entry.entry_id and entry.entry_id not in set(self.archive.entry_ids()):
+            self._archive_append("reconstructed", entry, "recovered after crash")
         path = self.path_for(layer)
         current = path.read_text(encoding="utf-8") if path.exists() else self._header(layer)
         if entry.entry_id and f"`id: {entry.entry_id}`" in current:
@@ -1346,7 +1441,7 @@ class MemoryStore:
             resolved = self._rebuild_resolved()
             ids, sources = self.revoked_sets()
             self.state.revoked = sorted(ids)
-            self.state.layer_counts = self._counts_from_ledger()
+            self.state.layer_counts = self._physical_counts()
             self.state.ledger_records = len(self.ledger_records())
             self.state.ledger_head = self._ledger_tail_hash()
             self.state.store_version = STORE_FORMAT
@@ -1357,6 +1452,63 @@ class MemoryStore:
         return {"blocked": False, "recovered": repaired, "resolved": resolved,
                 "revoked": sorted(ids), "revoked_sources": sorted(sources),
                 "counts": dict(self.state.layer_counts)}
+
+    # -- compaction --------------------------------------------------------
+    def compact(self, apply: bool = False, layers: list[str] | None = None) -> dict:
+        """Physically drop revoked bullets from layer files (ledger preserved).
+
+        Revocation is a ledger tombstone: the block stays in the layer file for
+        replay while the loader skips it (F02).  That is correct but grows files
+        forever.  ``compact`` rewrites a layer file to header + live bullets and
+        records the dropped ids in a ``compact`` ledger event; ``expected_layers``
+        skips those ids, so the file stays a pure function of the ledger.
+
+        Dry-run by default: call with ``apply=True`` to rewrite.  Only entries
+        that are already in the revocation closure are dropped -- live memory is
+        never touched by this operation.
+        """
+        wanted = {str(x).upper() for x in layers} if layers else {l.value for l in Layer}
+        with self._lock():
+            self._reload()
+            ids, sources = self.revoked_sets()
+            records = self.ledger_records()
+            already = self._dropped_ids(records)
+            report: dict = {"applied": bool(apply), "layers": {}, "dropped": []}
+            for layer in Layer:
+                if layer.value not in wanted:
+                    continue
+                skip = set(already.get(layer.value, set()))
+                expected = self._layer_from_ledger(layer, records, skip)
+                path = self.path_for(layer)
+                current = path.read_text(encoding="utf-8") if path.exists() else self._header(layer)
+                blocks, _unknown = self.parse_layer_text(current)
+                drop = [e.entry_id for e, _raw in blocks
+                        if e.entry_id in ids
+                        or (e.source_event_id and e.source_event_id in sources)
+                        or (e.derived_from and set(e.derived_from) & (ids | sources))]
+                kept = len(blocks) - len(drop)
+                info: dict = {"dropped": len(drop), "kept": kept,
+                              "before_sha256": _sha(current)}
+                if drop:
+                    new_text = self._layer_from_ledger(layer, records, skip | set(drop))
+                    info["after_sha256"] = _sha(new_text)
+                    info["dropped_ids"] = drop
+                    report["dropped"].extend(drop)
+                    if apply:
+                        self._guard_bytes(layer.value, expected)
+                        self._backup(path)
+                        self._atomic_write(path, new_text)
+                        self._ledger({
+                            "event": "compact", "tx": secrets.token_hex(6),
+                            "layer": layer.value, "dropped_ids": drop,
+                            "before_sha256": _sha(current), "after_sha256": _sha(new_text),
+                            "reason": "revoked cleanup",
+                        })
+                        self.state.layer_counts[spec(layer).name] = kept
+                report["layers"][spec(layer).target] = info
+            if apply:
+                self._save_state()
+            return report
 
     # -- loading -----------------------------------------------------------
     def _is_expired(self, entry: Entry) -> bool:

@@ -8,9 +8,9 @@
 
 **Author**: Liu Yinuo — project **liu bai** (留白).
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
-**Version**: 0.7.0.
+**Version**: 0.7.2.
 
-> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.0 is the current source release; it is the version the v0.4 review response refers to.
+> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.2 is the current source release; it is the version the v0.4 review response refers to.
 
 ## Download and use in five minutes
 
@@ -28,11 +28,18 @@ Then pick how your agent talks to it:
 
 - **MCP** (Claude Desktop, Cursor, any MCP client): run
   `four-layer-memory-mcp --root ./memory` and paste the JSON from
-  [docs/INTEGRATING.md](docs/INTEGRATING.md). The model gets nine tools
+  [docs/INTEGRATING.md](docs/INTEGRATING.md). The model gets eleven tools
   (`memory_load`, `memory_add`, `memory_consolidate`, `memory_status`,
   `memory_audit`, `memory_quarantine`, `memory_review`, `memory_handoff`,
-  `memory_recall`) and needs no code changes on the host side. None of those
-  tools can approve a write.
+  `memory_recall`, `memory_archive_search`, `memory_archive_verify`) and needs
+  no code changes on the host side. None of those tools can approve a write.
+- **Every write leaves an archive.** The store keeps an append-only,
+  hash-chained log of the raw text behind each decision
+  (`archive/events.jsonl`). It is never loaded into a layer, never injected and
+  never exported: it exists so a human can audit what was actually written and
+  recover the original wording behind a typed entry. `memory_archive_verify`
+  recomputes the chain; `memory_archive_search` finds raw text the working set
+  no longer holds.
 - **Recall is typed.** `memory_recall` searches stored *entries*, not transcript
   chunks: each hit carries its authority, evidence kind, lifecycle and
   revocation state, so a caller can tell "authorised knowledge" from "something

@@ -14,7 +14,7 @@ FAKE_KEY = "sk-" + "abc" * 6
 from pathlib import Path
 
 from four_layer_memory import Layer, MemoryStore, Entry, StoreError, Watermark, Action, decide, audit_store
-import helpers
+from . import helpers
 from four_layer_memory.distill import Candidate, plan
 from four_layer_memory.handoff import Handoff
 

@@ -23,7 +23,7 @@ from four_layer_memory.audit import audit_store
 from four_layer_memory.handoff import Handoff
 from four_layer_memory.store import Entry, MemoryStore, StoreError
 from four_layer_memory.triggers import Action, decide
-import helpers
+from . import helpers
 
 
 def _root(tmp: str) -> Path:

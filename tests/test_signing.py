@@ -16,7 +16,7 @@ from pathlib import Path
 from four_layer_memory import signing
 from four_layer_memory.audit import audit_store
 from four_layer_memory.store import Entry, MemoryStore
-import helpers
+from . import helpers
 
 
 class SigningCase(unittest.TestCase):

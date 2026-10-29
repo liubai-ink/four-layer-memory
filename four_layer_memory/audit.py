@@ -137,8 +137,18 @@ def audit_store(root: str | Path) -> dict:
                 auth.append({"code": "orphan_entry", "entry_id": entry.entry_id,
                              "layer": spec(layer).target})
     root_key = store.root
+    # A revoked entry stays in the ledger for replay, but it is no longer served:
+    # its approval record is not re-verified, otherwise revoking a legacy entry
+    # could never clear the authorization check.
+    revoked_ids, revoked_sources = store.revoked_sets()
+    revoked_skipped = 0
     for rec in records:
         if rec.get("event") not in ("write", "approve"):
+            continue
+        eid = str(rec.get("entry_id") or "")
+        if eid and (eid in revoked_ids
+                    or str(rec.get("source_event_id") or "") in revoked_sources):
+            revoked_skipped += 1
             continue
         if rec.get("tx") and str(rec["tx"]) not in bound_tx:
             auth.append({"code": "unbound_transaction", "tx": rec.get("tx")})
@@ -172,6 +182,7 @@ def audit_store(root: str | Path) -> dict:
             auth.append({"code": "approval_source_mismatch", "entry_id": entry.entry_id})
         if not str(arec.get("approver") or "").strip():
             auth.append({"code": "approval_missing_approver", "entry_id": entry.entry_id})
+    authorization["revoked_skipped"] = revoked_skipped
     authorization["findings"] = auth
     if auth:
         authorization["codes"] = sorted({f["code"] for f in auth})
@@ -179,6 +190,33 @@ def audit_store(root: str | Path) -> dict:
                         for f in auth)
     authorization["ok"] = not auth
     checks["authorization"] = authorization
+
+    # -- archive -----------------------------------------------------------
+    archive_check: dict = {"ok": True, "findings": []}
+    try:
+        chain = store.archive.verify()
+        archive_check["events"] = chain.get("count", 0)
+        archive_check["last_sha256"] = store.archive.last_sha256
+        if not chain.get("ok"):
+            archive_check["findings"].append(
+                {"code": "archive_chain_broken",
+                 "problems": list(chain.get("problems") or [])[:10]})
+        served = {str(r.get("entry_id")) for r in records
+                  if r.get("event") in ("write", "approve")}
+        captured = store.archive.entry_ids()
+        missing = sorted(x for x in served if x and x not in captured)
+        if missing:
+            archive_check["findings"].append(
+                {"code": "archive_missing_capture", "count": len(missing),
+                 "entry_ids": missing[:10]})
+    except Exception as exc:  # pragma: no cover - defensive
+        archive_check["findings"].append(
+            {"code": "archive_error", "message": repr(exc)})
+    if archive_check["findings"]:
+        archive_check["codes"] = sorted({f["code"] for f in archive_check["findings"]})
+        problems.extend(f"archive: {f['code']}" for f in archive_check["findings"])
+    archive_check["ok"] = not archive_check["findings"]
+    checks["archive"] = archive_check
 
     # -- ledger ------------------------------------------------------------
     integrity = store.ledger_integrity()
@@ -203,6 +241,6 @@ def _report(checks: dict, problems: list[str]) -> dict:
         "ok": ok,
         "checks": checks,
         "problems": problems,
-        "store_version": MemoryStore.VERSION if hasattr(MemoryStore, "VERSION") else "0.7.1",
+        "store_version": MemoryStore.VERSION if hasattr(MemoryStore, "VERSION") else "0.7.2",
         "watermark": WATERMARK,
     }

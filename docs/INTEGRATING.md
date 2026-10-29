@@ -86,7 +86,7 @@ ledger; you can read it with any editor.
 **From a clone without installing**: `command: "python"`, `args:
 ["-m", "four_layer_memory.mcp", "--root", "/path/to/memory"]`.
 
-Then the model can call eight tools:
+Then the model can call eleven tools:
 
 | Tool | What it does |
 |---|---|
@@ -98,6 +98,16 @@ Then the model can call eight tools:
 | `memory_quarantine` | list entries waiting for a human decision |
 | `memory_review` | **reject only** — acceptance is a host action (`four-layer-memory approve`) |
 | `memory_handoff`, `memory_recall` | read the cross-session cursor, or mark consolidation at a reference |
+| `memory_archive_search` | search the raw text behind past decisions (never injected) |
+| `memory_archive_verify` | recompute the archive hash chain and its coverage of served entries |
+
+The archive is a fifth destination that **never enters the working set**: the
+store writes the raw text behind every `write`/`approve`/`revoke` decision to
+`archive/events.jsonl` (hash-chained) right after the ledger record and before
+the layer file is written. It is not loaded, not injected and not exported in a
+bundle; it exists so a human can audit what was actually written and recover the
+original wording behind a typed entry. `audit` fails with
+`archive_missing_capture` when a served entry has no capture.
 
 ## The host's side of the contract
 
