@@ -59,7 +59,7 @@ for layer in ("A", "B"):                       # what you put in every prompt
 `MemoryStore.review(entry_id, accept=False)` is the only review path exposed to
 the writing agent: it can reject, never accept. The approval record binds the
 entry id, its `text_sha256`, the source event and the `layer:A` scope, and is
-signed with `.approval_key`.
+signed with `approval.key`.
 
 The store is a directory of markdown files plus a JSON state and a signed
 ledger; you can read it with any editor.
@@ -134,7 +134,7 @@ its summary) into your agent's instructions so the model knows the protocol.
 ## Verifying before you trust it
 
 ```bash
-python -m pytest -q                         # 75 tests
+python -m pytest -q                         # 100 tests
 python scripts/verify_v07_probes.py --source . --work-dir ./_v07 --result ./_v07/result.json
 python scripts/verify_release.py            # provenance, privacy, structure
 four-layer-memory --root ./memory audit     # structural / content / auth / ledger
@@ -143,6 +143,6 @@ four-layer-memory --root ./memory audit     # structural / content / auth / ledg
 The audit returns `{"ok": true}` only when all four checks pass. The ledger is a
 hash chain, signed with an HMAC key created by `init`; `four-layer-memory
 keygen --alg ed25519` upgrades to a public-key signature that a third party can
-verify with `fingerprint`. Approval records use a separate `.approval_key`,
+verify with `fingerprint`. Approval records use a separate `approval.key`,
 created by `init` and never exposed to the model. A copy of the store without key
 material is reported as unverifiable rather than as verified.

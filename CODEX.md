@@ -3,14 +3,16 @@
 前提：Python 3.10+；本包已解压到某个目录（下文记为 `<REPO>`）。
 Codex 侧的配置在 `~/.codex/config.toml`（Windows 为 `%USERPROFILE%\.codex\config.toml`）。
 
-本项目是一个 **stdio MCP server**，提供 9 个工具，Codex 可以直接挂载：
+本项目是一个 **stdio MCP server**，提供 11 个工具，Codex 可以直接挂载：
 
 ```
 memory_load  memory_add  memory_consolidate  memory_status  memory_audit
 memory_quarantine  memory_review  memory_recall  memory_handoff
+memory_archive_search  memory_archive_verify
+memory_archive_search  memory_archive_verify
 ```
 
-## 九个工具速查（一句话版）
+## 十一个工具速查（一句话版）
 
 | 工具 | 一句话 | 什么时候用 |
 |---|---|---|
@@ -23,6 +25,10 @@ memory_quarantine  memory_review  memory_recall  memory_handoff
 | `memory_recall` | 带类型的检索：返回条目＋authority/evidence/lifecycle，默认过滤已撤销/已过期 | 想不起旧事时 |
 | `memory_audit` | 四项审计：结构/内容/授权/账本；返回 findings 列表 | 交付前、发现异常时 |
 | `memory_handoff` | 生成交接包与游标（下一个会话从这条线继续） | 换会话/换机器前 |
+| `memory_archive_search` | 在本地原始存档里检索（不装载、不服务） | 想找原话/原始文本时 |
+| `memory_archive_verify` | 校验存档的哈希链与条数 | 交付前、怀疑存档被动过 |
+| `memory_archive_search` | 在本地原始存档里检索（不装载、不服务） | 想找原话/原始文本时 |
+| `memory_archive_verify` | 校验存档的哈希链与条数 | 交付前、怀疑存档被动过 |
 
 ### 最小工作流（在 Codex 里三句话）
 
@@ -33,7 +39,7 @@ memory_quarantine  memory_review  memory_recall  memory_handoff
 ### 三处容易卡住
 
 - **A 层写入会进隔离区**：这是"写入前准入"的设计，不是 bug。要么以宿主身份走 `approve`（CLI `approve` 或 Codex 侧人工批准），要么先按 B 层记。
-- `memory_status` 里的 `store_version` 是**磁盘格式**版本（0.7.0），不是包版本（0.7.2）；两者不同步是正常的。
+- `memory_status` 里的 `store_version` 是**磁盘格式**版本（0.7.0），不是包版本（0.7.4）；两者不同步是正常的。
 - **撤销（revoke）不在 MCP 工具里**，用 CLI：`python -m four_layer_memory revoke <source_event_id>`，会按类型图级联到派生条目。
 
 ## 三步接入

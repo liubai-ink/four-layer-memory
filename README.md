@@ -8,9 +8,9 @@
 
 **Author**: Liu Yinuo — project **liu bai** (留白).
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
-**Version**: 0.7.2.
+**Version**: 0.7.4.
 
-> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.2 is the current source release; it is the version the v0.4 review response refers to.
+> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.4 is the current source release; it is the version the v0.4 review response refers to.
 
 ## Download and use in five minutes
 
@@ -95,7 +95,7 @@ The store treats *who authorised a write* as part of the write, and it treats
   identifying or financial is quarantined in every layer.
 - Approval records bind one approval to one entry id, the entry bytes
   (`text_sha256`), the source event, the target scope and the format version, and
-  are HMAC-signed by the host approval key (`.approval_key`, created by `init`).
+  are HMAC-signed by the host approval key (`approval.key`, created by `init`).
   Replaying an old approval, or minting one for a different entry, fails
   verification.
 - The ledger is written before the layer file: the write record carries a

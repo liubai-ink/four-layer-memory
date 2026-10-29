@@ -24,10 +24,11 @@
 | 面 | 内容 | 迁移时做什么 |
 |---|---|---|
 | 数据面 | layer files、`quarantine/`、`ledger.jsonl`、`state.json`、签名 | 拷贝（bundle 内） |
-| 工具面 | MCP 8 工具 / CLI | 在新宿主挂上（同一协议） |
+| 工具面 | MCP 11 工具 / CLI | 在新宿主挂上（同一协议） |
 | 契约面 | `prompts/LOADING.md`（加载/写入/整合规则）、四轴准入规则 | 随包分发，读它 |
 
-- 迁移流程：`export --bundle` → 空白机 `init --from-bundle` → `audit` → `memory_load`。
+- 迁移流程：`export --out <bundle>` → 空白机 `init --from-bundle <bundle>` → `audit` → `memory_load`。
+- v0.7.4 起这条路径是**真的**：`init --from-bundle` 以 bundle 的 ledger records 为重放源（bullet 元数据不含 `source_event_id`），A 层由**导入方**重新走批准通道签发（旧签名绑定导出方的宿主键，故意不可携带），撤销闭包按 `source_event_id` 重建；见 `tests/test_portability.py`。
 - 不依赖任何平台 SDK；宿主可以是 DSH、别的 agent 框架、或任一支 MCP client。
 
 ## 3. Evidence plan（写进附录，标 proposed）
@@ -37,8 +38,9 @@ E2E（可自动化，不调外部模型）：
 1. 在根 A 建若干条目（含 1 条隔离区、1 条撤销），导出 bundle。
 2. 空白目录导入；断言：`audit` 四项全过；条目数/层分布/ledger 尾哈希与源一致。
 3. `memory_load` 输出与源部署**逐字节一致**（A+B 常驻部分）。
-4. 篡改 bundle 内任一 ledger 行 → 导入后 `audit` 必须失败（负例）。
-5. 删除 bundle 内签名 → `audit` 报告 `signed: none` 但仍可运行（降级路径）。
+4. 篡改 bundle 内任一 ledger 行 → `init --from-bundle` 在导入阶段就拒绝（先重算链哈希再落盘，不靠导入后的 `audit` 兜底）（负例）。
+5. 删除 bundle 内签名 → 导入仍可跑，`audit` 报 `signed: none`（降级路径）。
+
 
 指标：bundle 大小、导入耗时、验证耗时；与"重新手工录入"作定性对照即可，不宣称更快。
 

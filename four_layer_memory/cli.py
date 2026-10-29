@@ -50,6 +50,14 @@ def cmd_init(args) -> int:
     status = store.status()
     status["signing"] = {"alg": signing.algorithm(args.root), "created": info["created"]}
     status["approval_fingerprint"] = approval.fingerprint(args.root)
+    report = None
+    if getattr(args, "from_bundle", ""):
+        # The exporter's signatures are bound to its host key, so the bundle is
+        # replayed: layer-A claims are re-approved by *this* host or not at all.
+        report = store.import_bundle(args.from_bundle,
+                                     approver=getattr(args, "approver", "host"),
+                                     force=bool(getattr(args, "force", False)))
+        status["import"] = report
     print(json.dumps(status, ensure_ascii=False, indent=2))
     return 0
 
@@ -246,6 +254,12 @@ def main(argv: list[str] | None = None) -> int:
 
     ini = sub.add_parser("init")
     ini.add_argument("--session", default="unnamed")
+    ini.add_argument("--from-bundle", default="",
+                     help="replay an export bundle into a fresh store "
+                          "(docs/PORTABILITY.md promises this path)")
+    ini.add_argument("--approver", default="host")
+    ini.add_argument("--force", action="store_true",
+                     help="replay into a store that already has content")
 
     a = sub.add_parser("add")
     a.add_argument("layer", choices=[l.value for l in Layer])

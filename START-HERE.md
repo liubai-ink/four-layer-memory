@@ -3,7 +3,7 @@
 这是一个**给长会话 AI 用的记忆底座**（Python，无第三方依赖）。
 它不教你"怎么让模型记住"，它管的是：**哪些内容配被写进记忆、谁有权写、写错能不能撤、事后能不能验。**
 
-- 版本：v0.7.2
+- 版本：v0.7.4
 - 包内不含任何作者本地路径、密钥或私人数据
 - 需要：Python 3.10 及以上；`cryptography` 只在你想用 Ed25519 签名时才需要（默认 HMAC）
 
@@ -66,7 +66,7 @@ Windows 上若 `python` 不在 PATH，可用 `py -3` 代替。
      }
    }
    ```
-   共 9 个工具：`memory_init / memory_load / memory_add / memory_consolidate / memory_status / memory_audit / memory_quarantine / memory_review / memory_recall`。
+   共 11 个工具：`memory_load` / `memory_add` / `memory_consolidate` / `memory_status` / `memory_audit` / `memory_quarantine` / `memory_review` / `memory_handoff` / `memory_recall` / `memory_archive_search` / `memory_archive_verify`。
 
 ---
 

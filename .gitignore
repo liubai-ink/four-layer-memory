@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 .venv/
 dist/
@@ -13,7 +13,13 @@ store/
 *_store/
 .signing_key
 .signing_key.pub
+approval.key
+.approval_key
+.approval_token
+.four-layer-memory/
 quarantine/
 ledger.jsonl
 *.db
-*.sqlite*.bak-*
+*.sqlite
+*.bak
+*.bak-*

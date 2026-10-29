@@ -741,6 +741,27 @@ class MemoryStore:
                 "verified_with": "private material" if mat.get("private") else
                                  ("public material" if mat.get("public") else "none")}
 
+    @staticmethod
+    def verify_ledger_records(records: list[dict]) -> dict:
+        """Re-verify a *foreign* ledger's hash chain before replaying it.
+
+        ``ledger_integrity()`` checks this store's own ledger (and the durable
+        claim in ``state.json``); a bundle's ``ledger_integrity`` field is only
+        the exporter's claim, so the chain has to be recomputed from the records
+        themselves.  Signatures cannot be checked here: the exporter's key is
+        intentionally absent.
+        """
+        prev = ""
+        for index, rec in enumerate(records):
+            claimed = rec.get("hash")
+            body = {k: v for k, v in rec.items() if k not in ("hash", "sig", "sig_alg")}
+            if body.get("prev") != prev:
+                return {"ok": False, "at": index, "reason": "prev hash mismatch"}
+            if _sha(_canonical(body)) != claimed:
+                return {"ok": False, "at": index, "reason": "hash mismatch"}
+            prev = claimed or ""
+        return {"ok": True, "records": len(records), "head": prev}
+
     # -- writes ------------------------------------------------------------
     def _backup(self, path: Path) -> None:
         if not path.exists():
@@ -1642,7 +1663,7 @@ class MemoryStore:
         out = Path(out)
         payload = {
             "watermark": WATERMARK,
-            "note": "Provenance: liu bai (Liu Zhu & Shen Bai). Keep this field when redistributing.",
+            "note": "Provenance: liu bai (Liu Yinuo). Keep this field when redistributing.",
             "store_version": STORE_FORMAT,
             "state": json.loads(self.state.to_json()),
             "layers": {},
@@ -1664,3 +1685,130 @@ class MemoryStore:
             }
         out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return out
+
+    def import_bundle(self, bundle: str | Path, approver: str = "host",
+                      force: bool = False) -> dict:
+        """Rebuild this store from an ``export_bundle`` payload.
+
+        What travels is the *record*, not the signatures.  The exporter's
+        approval records are bound to its host key, so they must not verify
+        here -- that is the point of the design (a stolen bundle cannot widen
+        layer A anywhere else).  Layer-A entries are therefore replayed through
+        the same quarantine -> host-approval channel with a freshly minted
+        record, which is why ``reapproved`` is reported separately from
+        ``imported``.
+
+        Revoked entries come back as tombstones and are then re-revoked by their
+        source event, so the closure (``derived_from`` chains included) matches
+        the exporter's exactly -- skipping them would lose the ids the closure
+        is made of.
+
+        The bundle's ledger records -- not the layer bodies -- are the replay
+        source, because bullet metadata does not carry ``source_event_id``.
+        The chain is re-verified from the records themselves: the bundle's
+        ``ledger_integrity`` field is the exporter's claim, not evidence.
+        """
+        bundle = Path(bundle)
+        try:
+            payload = json.loads(bundle.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise StoreError(f"cannot read bundle {bundle}: {exc}") from exc
+        if payload.get("watermark") != WATERMARK:
+            raise StoreError("bundle is missing the liu-bai provenance watermark; "
+                             "refusing to import")
+        records = list(payload.get("ledger") or [])
+        if not records:
+            raise StoreError("bundle has no ledger records; nothing to replay")
+        chain = self.verify_ledger_records(records)
+        if not chain.get("ok"):
+            raise StoreError(f"bundle ledger does not verify: {chain.get('reason')}")
+        if not force:
+            nonempty = bool(self.ledger_records()) or any(
+                self._parse_layer(layer)[0] for layer in Layer)
+            if nonempty:
+                raise StoreError("target store is not empty; pass force=True to replay into it")
+        if signing.algorithm(self.root) is None:
+            signing.keygen(self.root)
+        approval.ensure_key(self.root)
+
+        revoked = set(str(x) for x in (payload.get("revoked") or []))
+        revoke_sources: list[str] = []
+        imported = reapproved = skipped = 0
+        failures: list[dict] = []
+        for rec in records:
+            event = str(rec.get("event") or "")
+            if event in ("write", "approve"):
+                try:
+                    entry = Entry.from_record(rec)
+                    if not entry.text:
+                        skipped += 1
+                        continue
+                    before = len(self.ledger_records())
+                    if event == "approve":
+                        record = approval.mint(
+                            self.root, entry_id=entry.entry_id, text=entry.text,
+                            source_event_id=entry.source_event_id, approver=approver)
+                        entry.approved = True
+                        self.add(entry, approval_record=record)
+                        reapproved += 1
+                    else:
+                        entry.approved = False
+                        self.add(entry)
+                    if len(self.ledger_records()) > before:
+                        imported += 1
+                    else:
+                        skipped += 1
+                except StoreError as exc:
+                    skipped += 1
+                    failures.append({"entry_id": str(rec.get("entry_id") or ""),
+                                     "error": str(exc)})
+            elif event == "revoke" and rec.get("source_event_id"):
+                revoke_sources.append(str(rec["source_event_id"]))
+        for source in revoke_sources:
+            self.revoke(source)
+
+        origin = payload.get("state") or {}
+        with self._lock():
+            self._reload()
+            self._ledger({
+                "event": "import",
+                "bundle": bundle.name,
+                "bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                "bundle_watermark": str(payload.get("watermark") or ""),
+                "origin_session": str(origin.get("session_id") or ""),
+                "imported": imported,
+                "reapproved": reapproved,
+                "skipped": skipped,
+            })
+            self.state.session_id = str(origin.get("session_id") or self.state.session_id)
+            self.state.last_anchor_ref = str(origin.get("last_anchor_ref") or "")
+            self.state.consolidated_at = str(origin.get("consolidated_at") or "")
+            self.state.usage_at_consolidation = float(
+                origin.get("usage_at_consolidation") or 0.0)
+            self.state.cooldown_until_entries = int(
+                origin.get("cooldown_until_entries") or 0)
+            ids, sources = self.revoked_sets()
+            self.state.revoked = sorted(ids)
+            self.state.layer_counts = self._physical_counts()
+            self.state.ledger_records = len(self.ledger_records())
+            self.state.ledger_head = self._ledger_tail_hash()
+            self.state.store_version = STORE_FORMAT
+            self._save_state()
+        ids, sources = self.revoked_sets()
+        return {
+            "imported": imported,
+            "reapproved": reapproved,
+            "skipped": skipped,
+            "bundle_revoked": len(revoked),
+            "revoked_total": len(ids),
+            "revoked_sources": sorted(sources),
+            "revoked_mismatch": sorted(revoked ^ ids),
+            "layer_counts": self._physical_counts(),
+            "ledger_records": len(self.ledger_records()),
+            "bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
+            "approval_fingerprint": approval.fingerprint(self.root),
+            "failures": failures,
+            "note": "layer-A approvals are re-minted by this host; the exporter's "
+                    "signatures are intentionally not portable",
+        }
+

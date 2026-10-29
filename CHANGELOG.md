@@ -2,7 +2,47 @@
 
 # Changelog
 
-## 0.7.3 (unreleased) - 2026-10-28
+## 0.7.4 - 2026-10-29
+
+### `init --from-bundle`: the portability claim is now real
+
+`docs/PORTABILITY.md` promised that "an exported bundle can be re-imported into
+a blank deployment", but `init` only accepted `--session`. Implemented:
+
+- `Store.import_bundle(bundle, approver="host", force=False)` replays the
+  bundle's ledger records — layer bullets carry no `source_event_id`, so the
+  ledger is the only faithful source. `write` records are re-added as-is;
+  `approve` records are re-signed by the **importing** host (an exported
+  signature is bound to the exporter's key and deliberately does not travel);
+  revocations are replayed by `source_event_id` to rebuild the closure. The
+  bundle's `state` is restored, and an `import` ledger event records
+  `bundle_sha256` plus the origin session.
+- A tampered bundle is refused up front: `verify_ledger_records()` recomputes
+  the ledger hash chain instead of trusting the exporter's `ledger_integrity`
+  claim. Importing into a non-empty store requires `force=True`.
+- CLI: `four-layer-memory init --from-bundle <path> [--approver host] [--force]`;
+  the import report is attached to the printed status under `import`.
+- `tests/test_portability.py`: 6 cases — round-trip (incl. an A-layer entry and
+  a revoke, with `revoked_ids()` equality), tampered watermark, tampered ledger
+  row, non-empty target, the CLI path, and the provenance note. Full suite: 100.
+
+### Provenance and version alignment
+
+- Bundle provenance note now reads `liu bai (Liu Yinuo)`, matching `LICENSE`
+  (it previously said "Liu Zhu & Shen Bai").
+- Version aligned to 0.7.4 across `pyproject.toml`, `README.md`,
+  `START-HERE.md`, `CODEX.md`, `CITATION.cff` (they disagreed: 0.6.1 / 0.7.2 /
+  0.7.3).
+- MCP tool count corrected to 11 in `CODEX.md`, `docs/PORTABILITY.md` and
+  `START-HERE.md` (the latter listed a non-existent `memory_init`).
+- Documented key filename corrected to `approval.key` (the code creates
+  `approval.key`; docs said `.approval_key`) in `docs/INTEGRATING.md` and
+  `docs/THREAT-MODEL.md`.
+- Optional extras added: `ed25519 = ["cryptography>=41"]`,
+  `test = ["pytest>=7"]`.
+- CI: `.github/workflows/ci.yml` runs the suite on Python 3.10 / 3.11 / 3.12.
+
+## 0.7.3 - 2026-10-28
 
 ### Revoked entries no longer fail the audit
 
