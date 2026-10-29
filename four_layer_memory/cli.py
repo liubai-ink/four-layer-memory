@@ -69,24 +69,45 @@ def cmd_keygen(args) -> int:
     return 0
 
 
+def cmd_search(args) -> int:
+    store = MemoryStore(args.root)
+    hits = store.search(
+        args.query,
+        layer=(args.layer or None),
+        hybrid=bool(getattr(args, "hybrid", False)),
+        include_historical=bool(getattr(args, "include_historical", False)),
+        limit=args.limit,
+    )
+    print(json.dumps({"query": args.query,
+                      "hybrid": bool(getattr(args, "hybrid", False)),
+                      "hits": hits}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_add(args) -> int:
     store = MemoryStore(args.root)
-    e = store.add(
-        Entry(
-            layer=args.layer,
-            text=args.text,
-            source=args.source,
-            authority=args.authority,
-            evidence=args.evidence,
-            lifecycle=args.lifecycle,
-            source_event_id=args.source_event,
-            scope=getattr(args, "scope", "") or "",
-            expires_at=getattr(args, "expires_at", "") or "",
-            valid_from=getattr(args, "valid_from", "") or "",
-            valid_to=getattr(args, "valid_to", "") or "",
-            approved=False,  # a write never grants approval by itself
-        )
+    entry = Entry(
+        layer=args.layer,
+        text=args.text,
+        source=args.source,
+        authority=args.authority,
+        evidence=args.evidence,
+        lifecycle=args.lifecycle,
+        source_event_id=args.source_event,
+        scope=getattr(args, "scope", "") or "",
+        expires_at=getattr(args, "expires_at", "") or "",
+        valid_from=getattr(args, "valid_from", "") or "",
+        valid_to=getattr(args, "valid_to", "") or "",
+        supersedes=getattr(args, "supersedes", "") or "",
+        approved=False,  # a write never grants approval by itself
     )
+    if getattr(args, "noop", False):
+        # A NOOP is a decision too: record that the candidate was read and judged
+        # to add nothing, without writing a duplicate claim into a layer.
+        report = store.record_noop(entry, reason=getattr(args, "reason", "") or "")
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
+    e = store.add(entry)
     pending = [x for x in store.quarantine_entries() if x.get("entry_id") == e.entry_id]
     accepted = not pending
     if pending and args.approved:
@@ -281,6 +302,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="ISO date/datetime from which the claim is true")
     a.add_argument("--valid-to", default="",
                    help="ISO date/datetime after which the claim is no longer true")
+    a.add_argument("--supersedes", default="",
+                   help="entry id this claim replaces (write-side merge); the old "
+                        "entry stays in the ledger but stops being served")
+    a.add_argument("--noop", action="store_true",
+                   help="record that this candidate was deliberately not written "
+                        "(a NOOP decision) instead of adding it")
+    a.add_argument("--reason", default="",
+                   help="why this write is a NOOP (recorded in the ledger)")
     a.add_argument("--approved", action="store_true",
                    help="host approval of this write in the same call (layer A)")
 
@@ -292,6 +321,15 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--anchor", required=True)
     c.add_argument("--usage", type=float, required=True)
     c.add_argument("--cooldown", type=int, default=DEFAULT_COOLDOWN_ENTRIES)
+
+    s = sub.add_parser("search")
+    s.add_argument("query")
+    s.add_argument("--layer", default="")
+    s.add_argument("--limit", type=int, default=10)
+    s.add_argument("--hybrid", action="store_true",
+                   help="rank by BM25 over tokens (CJK bigrams included) instead of "
+                        "requiring the query to appear verbatim")
+    s.add_argument("--include-historical", action="store_true")
 
     sub.add_parser("status")
 
@@ -355,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
         "audit": cmd_audit, "export": cmd_export, "keygen": cmd_keygen,
         "quarantine": cmd_quarantine, "calibrate": cmd_calibrate,
         "revoke": cmd_revoke, "demo": cmd_demo, "compact": cmd_compact,
+        "search": cmd_search,
     }[args.cmd]
     return fn(args)
 

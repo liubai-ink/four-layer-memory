@@ -8,9 +8,9 @@
 
 **Author**: liubai — project **liu bai** (留白).
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
-**Version**: 0.7.5.
+**Version**: 0.7.6.
 
-> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.5 is the current source release; it is the version the v0.4 review response refers to.
+> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.6 is the current source release; it is the version the v0.4 review response refers to.
 
 ## Download and use in five minutes
 
@@ -56,6 +56,17 @@ Then pick how your agent talks to it:
   public memory benchmark covers: write-gate precision, revoke residual rate and
   ledger tamper detectability. It prints a JSON report and exits non-zero if any
   of them regresses.
+- **Claims are merged on the write side.** `Entry(supersedes=<id>)` records that a
+  newer claim replaces an older one. The old bullet stays in the layer file and in
+  the ledger, so the history stays readable, but `read_layers()` and `search()` stop
+  serving it, `read_layers()["superseded"]` names the replacement, and `audit`
+  reports every chain. Revoking or expiring the replacement brings the old claim
+  back. `add --noop --reason "..."` records the *decision not to write*: "I looked
+  and there was nothing new" is a decision too.
+- **Recall can rank instead of match.** `search(..., hybrid=True)` (CLI:
+  `search --hybrid`) ranks by BM25 over tokens — Latin words plus CJK single
+  characters and bigrams — so `架构记忆` finds `记忆架构`. The default stays an exact
+  substring match: predictable, and zero dependencies either way.
 - **CLI**: for poking at a store by hand; `approve` lives here because it is a
   host decision, not a model decision.
 

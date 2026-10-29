@@ -39,7 +39,7 @@ memory_archive_search  memory_archive_verify
 ### 三处容易卡住
 
 - **A 层写入会进隔离区**：这是"写入前准入"的设计，不是 bug。要么以宿主身份走 `approve`（CLI `approve` 或 Codex 侧人工批准），要么先按 B 层记。
-- `memory_status` 里的 `store_version` 是**磁盘格式**版本（0.7.0），不是包版本（0.7.5）；两者不同步是正常的。
+- `memory_status` 里的 `store_version` 是**磁盘格式**版本（0.7.0），不是包版本（0.7.6）；两者不同步是正常的。
 - **撤销（revoke）不在 MCP 工具里**，用 CLI：`python -m four_layer_memory revoke <source_event_id>`，会按类型图级联到派生条目。
 
 ## 三步接入

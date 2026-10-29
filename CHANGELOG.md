@@ -2,6 +2,37 @@
 
 # Changelog
 
+## 0.7.6 - 2026-10-29
+
+### Write-side merge: a newer claim can replace an older one
+
+Appending forever leaves the reader to reconcile contradictions at read time.
+An entry can now declare `supersedes=<entry_id>`:
+
+- The replaced bullet **stays** in its layer file and in the ledger — the history
+  is not rewritten — but `read_layers()` and `search()` stop serving it.
+- `read_layers()["superseded"]` lists the replaced ids; hits reachable through
+  `search(include_historical=True)` carry `superseded_by`.
+- The replacement only holds while it is itself servable: revoking or expiring it
+  brings the old claim back, because the ledger recorded "something newer came",
+  never "the old one was false".
+- `add()` refuses a `supersedes` target that is not in the ledger, and refuses to
+  supersede itself. `audit` gained a `supersede` check (`chains`, `findings`).
+
+A NOOP is also a decision: `four-layer-memory add --noop --reason "duplicate"`
+records `{"event": "noop", ...}` in the ledger and writes nothing to a layer, so a
+later reader can tell "considered and rejected" from "never noticed". `noop` never
+enters `known_ids`, so it cannot mask a missing write.
+
+### Optional BM25 ranking for recall (dependency-free)
+
+`search(..., hybrid=True)` / `four-layer-memory search --hybrid` ranks candidates
+with BM25 over tokens: lowercase Latin words (`[a-z0-9_]+`) plus CJK single
+characters and bigrams. `架构记忆` therefore finds `记忆架构`, which a substring match
+cannot. Exact substring hits still outrank pure BM25 matches. The default remains
+substring search — no dependencies are added, and `bm25.py` is ~60 lines of
+standard library.
+
 ## 0.7.5 - 2026-10-29
 
 ### Dual timeline: a claim can be true only for a while

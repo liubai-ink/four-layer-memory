@@ -126,6 +126,25 @@ def audit_store(root: str | Path) -> dict:
                         for f in temporal["findings"])
     checks["temporal"] = temporal
 
+    # -- supersede (write-side merge) ---------------------------------------
+    supersede: dict = {"ok": True, "findings": [], "chains": 0}
+    _records = store.ledger_records()
+    _committed = {str(r.get("entry_id")) for r in _records
+                  if r.get("event") in ("write", "approve")}
+    for _entry in store._servable(_records):
+        if not _entry.supersedes:
+            continue
+        supersede["chains"] += 1
+        if _entry.supersedes not in _committed:
+            supersede["findings"].append({"code": "supersedes_unknown_target",
+                                          "entry_id": _entry.entry_id,
+                                          "target": _entry.supersedes})
+    supersede["ok"] = not supersede["findings"]
+    if supersede["findings"]:
+        problems.extend(f"supersede: {f['code']} {f.get('entry_id')}"
+                        for f in supersede["findings"])
+    checks["supersede"] = supersede
+
     # -- content -----------------------------------------------------------
     content: dict = {"ok": True, "findings": []}
     findings: list[dict] = []

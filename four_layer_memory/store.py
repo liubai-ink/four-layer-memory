@@ -149,6 +149,10 @@ class Entry:
     # when it was recorded (``at`` / the ledger order).
     valid_from: str = ""
     valid_to: str = ""
+    # write-side merge (v0.7.6): this claim replaces ``supersedes`` from
+    # ``valid_from`` (or the moment it was written) onwards.  The replaced entry
+    # stays in the ledger and stays reachable historically; it is no longer served.
+    supersedes: str = ""
 
     def validate(self) -> None:
         s = spec(self.layer)
@@ -180,6 +184,8 @@ class Entry:
                 f"{self.layer}|{self.text}|{self.source}|{self.at}".encode("utf-8")
             ).hexdigest()[:12]
             self.entry_id = digest
+        if self.supersedes and self.supersedes == self.entry_id:
+            raise StoreError("an entry cannot supersede itself")
 
     def to_record(self) -> dict:
         return {
@@ -198,6 +204,7 @@ class Entry:
             "expires_at": self.expires_at,
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
+            "supersedes": self.supersedes,
             "revoked_at": self.revoked_at,
             "approved": bool(self.approved),
             "text_sha256": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
@@ -224,6 +231,7 @@ class Entry:
             expires_at=str(rec.get("expires_at", "")),
             valid_from=str(rec.get("valid_from", "")),
             valid_to=str(rec.get("valid_to", "")),
+            supersedes=str(rec.get("supersedes", "")),
         )
 
 
@@ -535,6 +543,8 @@ class MemoryStore:
             bullet += f"  `valid_from: {entry.valid_from}`"
         if entry.valid_to:
             bullet += f"  `valid_to: {entry.valid_to}`"
+        if entry.supersedes:
+            bullet += f"  `supersedes: {entry.supersedes}`"
         if entry.tags:
             bullet += f"  `tags: {','.join(entry.tags)}`"
         return bullet
@@ -562,6 +572,8 @@ class MemoryStore:
             bullet += f"  `valid_from: {entry.valid_from}`"
         if entry.valid_to:
             bullet += f"  `valid_to: {entry.valid_to}`"
+        if entry.supersedes:
+            bullet += f"  `supersedes: {entry.supersedes}`"
         if entry.tags:
             bullet += f"  `tags: {','.join(entry.tags)}`"
         return bullet
@@ -608,6 +620,7 @@ class MemoryStore:
                 expires_at=meta.get("expires", ""),
                 valid_from=meta.get("valid_from", ""),
                 valid_to=meta.get("valid_to", ""),
+                supersedes=meta.get("supersedes", ""),
                 approved="approved" in tags,
             )
             blocks.append((entry, list(current["raw"])))
@@ -641,7 +654,7 @@ class MemoryStore:
     # -- typed recall ------------------------------------------------------
     def search(self, query: str, layer: str | None = None,
                include_revoked: bool = False, include_expired: bool = False,
-               include_historical: bool = False,
+               include_historical: bool = False, hybrid: bool = False,
                limit: int = 20) -> list[dict]:
         """Retrieve entries by text, keeping their authority and revocation state.
 
@@ -656,6 +669,7 @@ class MemoryStore:
             return []
         ql = q.casefold()
         revoked, revoked_sources = self.revoked_sets()
+        superseded = self._superseded_ids()
         if layer:
             layers = [str(spec(layer).layer.value)]
         else:
@@ -666,7 +680,8 @@ class MemoryStore:
             blocks, _unknown = self._parse_layer(lname)
             for entry, _raw in blocks:
                 hay = entry.text.casefold()
-                if ql not in hay:
+                hits = hay.count(ql) if ql in hay else 0
+                if not hits and not hybrid:
                     continue
                 is_revoked = bool(
                     (entry.entry_id and entry.entry_id in revoked)
@@ -675,6 +690,8 @@ class MemoryStore:
                 if is_revoked and not include_revoked:
                     continue
                 if not include_expired and self._is_expired(entry):
+                    continue
+                if entry.entry_id in superseded and not include_historical:
                     continue
                 if not include_historical:
                     if self._is_historical(entry) or self._is_future(entry):
@@ -693,9 +710,20 @@ class MemoryStore:
                     "valid_to": entry.valid_to,
                     "tags": list(entry.tags),
                     "revoked": is_revoked,
-                    "matches": hay.count(ql),
+                    "matches": hits,
+                    "superseded_by": superseded.get(entry.entry_id, ""),
                 })
-        out.sort(key=lambda d: (d["layer"], -d["matches"], d["at"]))
+        if hybrid:
+            from .bm25 import bm25_rank
+            scores = bm25_rank(q, [d["text"] for d in out])
+            for hit, score in zip(out, scores):
+                # exact substring is strong evidence; BM25 covers the rest.
+                hit["score"] = round(
+                    float(score) + 2.0 * (1 if hit["matches"] else 0)
+                    + 0.1 * min(int(hit["matches"]), 3), 6)
+            out.sort(key=lambda d: (-d["score"], d["layer"], d["at"]))
+        else:
+            out.sort(key=lambda d: (d["layer"], -d["matches"], d["at"]))
         return out[:lim]
 
     # -- ledger ------------------------------------------------------------
@@ -1008,6 +1036,11 @@ class MemoryStore:
             existing = self._check_idempotent(entry, records)
             if existing is not None:
                 return existing
+            if entry.supersedes:
+                target = self._find_record(entry.supersedes, records)
+                if target is None:
+                    raise StoreError(
+                        f"cannot supersede {entry.supersedes!r}: no such entry in the ledger")
             ids, sources = self.revoked_sets()
             if entry.entry_id in ids or (entry.source_event_id and entry.source_event_id in sources) \
                     or (set(entry.derived_from) & (ids | sources)):
@@ -1626,6 +1659,52 @@ class MemoryStore:
             return False
         return start > datetime.now(timezone.utc).timestamp()
 
+    def _superseded_ids(self, records: list[dict] | None = None) -> dict[str, str]:
+        """entry_id -> the live entry that replaced it (write-side merge, v0.7.6).
+
+        A replacement only takes effect while it is itself servable: revoking or
+        expiring the successor brings the old claim back, because the ledger never
+        recorded the old claim as false - it recorded that something newer came.
+        """
+        records = records if records is not None else self.ledger_records()
+        revoked, revoked_sources = self.revoked_sets()
+        superseded: dict[str, str] = {}
+        for entry in self._servable(records):
+            if not entry.supersedes:
+                continue
+            if entry.entry_id in revoked or (
+                    entry.source_event_id and entry.source_event_id in revoked_sources):
+                continue
+            if self._is_expired(entry) or self._is_historical(entry) or self._is_future(entry):
+                continue
+            superseded[entry.supersedes] = entry.entry_id
+        return superseded
+
+    def record_noop(self, entry: Entry, reason: str = "") -> dict:
+        """Record that a candidate was deliberately *not* written.
+
+        "I looked and concluded nothing new" is a decision too.  Leaving it in the
+        ledger is what lets a later reader tell a NOOP (the merge semantics of
+        v0.7.6) from a fact that was simply never noticed, without writing a
+        duplicate claim into a layer.
+        """
+        entry.validate()
+        entry.at = entry.at or now_iso()
+        with self._lock():
+            self._reload()
+            self._ledger({
+                "event": "noop",
+                "tx": secrets.token_hex(6),
+                "entry_id": entry.entry_id,
+                "layer": entry.layer,
+                "text": entry.text,
+                "source": entry.source,
+                "reason": reason or "noop: no new information",
+            })
+            self._save_state()
+        return {"noop": True, "entry_id": entry.entry_id, "layer": entry.layer,
+                "reason": reason or "noop: no new information"}
+
     def read_layers(self, layers: list[str], scope: str = "") -> dict:
         """Return the servable contents of the requested layers.
 
@@ -1644,10 +1723,12 @@ class MemoryStore:
             records = self.ledger_records()
             ids, sources = self._closure(records)
             servable = self._servable(records)
+            superseded: dict[str, str] = self._superseded_ids(records)
         blocks: list[dict] = []
         expired: list[str] = []
         historical: list[str] = []
         future: list[str] = []
+        superseded_out: list[str] = []
         for entry in servable:
             if entry.layer not in wanted:
                 continue
@@ -1656,6 +1737,9 @@ class MemoryStore:
             if entry.source_event_id and entry.source_event_id in sources:
                 continue
             if entry.derived_from and set(entry.derived_from) & (ids | sources):
+                continue
+            if entry.entry_id in superseded:
+                superseded_out.append(entry.entry_id)
                 continue
             if self._is_expired(entry):
                 expired.append(entry.entry_id)
@@ -1694,6 +1778,7 @@ class MemoryStore:
             "expired": expired,
             "historical": historical,
             "future": future,
+            "superseded": sorted(superseded_out),
             "unknown": unknown,
             "debug": {"unknown_total": sum(unknown.values())},
             "watermark": WATERMARK,
