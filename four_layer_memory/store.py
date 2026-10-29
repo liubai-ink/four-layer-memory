@@ -109,6 +109,17 @@ def _is_expired(value: str) -> bool:
         return now >= when
     return now.date() > when
 
+def _ts(value: str):
+    """Absolute UTC timestamp for an ISO date or datetime, or None."""
+    when = _parse_when(value)
+    if when is None:
+        return None
+    if isinstance(when, datetime):
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return when.timestamp()
+    return datetime(when.year, when.month, when.day, tzinfo=timezone.utc).timestamp()
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -134,6 +145,10 @@ class Entry:
     # not a comment in the prose, so the loader can enforce them.
     scope: str = ""
     expires_at: str = ""
+    # dual timeline (v0.7.5): when the claim was true, as opposed to
+    # when it was recorded (``at`` / the ledger order).
+    valid_from: str = ""
+    valid_to: str = ""
 
     def validate(self) -> None:
         s = spec(self.layer)
@@ -150,6 +165,13 @@ class Entry:
         admission.normalize(self.layer, self.authority, self.evidence, self.lifecycle)
         if self.expires_at and _parse_when(self.expires_at) is None:
             raise StoreError(f"unparseable expiry date: {self.expires_at!r} (use ISO-8601)")
+        for label, value in (("valid_from", self.valid_from), ("valid_to", self.valid_to)):
+            if value and _parse_when(value) is None:
+                raise StoreError(f"unparseable {label} date: {value!r} (use ISO-8601)")
+        if self.valid_from and self.valid_to:
+            _start, _end = _ts(self.valid_from), _ts(self.valid_to)
+            if _start is not None and _end is not None and _start > _end:
+                raise StoreError("valid_from must not be later than valid_to")
         if self.scope and len(self.scope) > 120:
             raise StoreError("scope must be a short identifier (<= 120 chars)")
         self.text = text
@@ -174,6 +196,8 @@ class Entry:
             "derived_from": list(self.derived_from),
             "scope": self.scope,
             "expires_at": self.expires_at,
+            "valid_from": self.valid_from,
+            "valid_to": self.valid_to,
             "revoked_at": self.revoked_at,
             "approved": bool(self.approved),
             "text_sha256": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
@@ -198,6 +222,8 @@ class Entry:
             approved=bool(rec.get("approved", False)),
             scope=str(rec.get("scope", "")),
             expires_at=str(rec.get("expires_at", "")),
+            valid_from=str(rec.get("valid_from", "")),
+            valid_to=str(rec.get("valid_to", "")),
         )
 
 
@@ -505,6 +531,10 @@ class MemoryStore:
             bullet += f"  `scope: {entry.scope}`"
         if entry.expires_at:
             bullet += f"  `expires: {entry.expires_at}`"
+        if entry.valid_from:
+            bullet += f"  `valid_from: {entry.valid_from}`"
+        if entry.valid_to:
+            bullet += f"  `valid_to: {entry.valid_to}`"
         if entry.tags:
             bullet += f"  `tags: {','.join(entry.tags)}`"
         return bullet
@@ -528,6 +558,10 @@ class MemoryStore:
             bullet += f"  `scope: {entry.scope}`"
         if entry.expires_at:
             bullet += f"  `expires: {entry.expires_at}`"
+        if entry.valid_from:
+            bullet += f"  `valid_from: {entry.valid_from}`"
+        if entry.valid_to:
+            bullet += f"  `valid_to: {entry.valid_to}`"
         if entry.tags:
             bullet += f"  `tags: {','.join(entry.tags)}`"
         return bullet
@@ -572,6 +606,8 @@ class MemoryStore:
                 entry_id=meta.get("id", ""),
                 scope=meta.get("scope", ""),
                 expires_at=meta.get("expires", ""),
+                valid_from=meta.get("valid_from", ""),
+                valid_to=meta.get("valid_to", ""),
                 approved="approved" in tags,
             )
             blocks.append((entry, list(current["raw"])))
@@ -605,6 +641,7 @@ class MemoryStore:
     # -- typed recall ------------------------------------------------------
     def search(self, query: str, layer: str | None = None,
                include_revoked: bool = False, include_expired: bool = False,
+               include_historical: bool = False,
                limit: int = 20) -> list[dict]:
         """Retrieve entries by text, keeping their authority and revocation state.
 
@@ -639,6 +676,9 @@ class MemoryStore:
                     continue
                 if not include_expired and self._is_expired(entry):
                     continue
+                if not include_historical:
+                    if self._is_historical(entry) or self._is_future(entry):
+                        continue
                 out.append({
                     "entry_id": entry.entry_id,
                     "layer": lname,
@@ -649,6 +689,8 @@ class MemoryStore:
                     "evidence": entry.evidence,
                     "lifecycle": entry.lifecycle,
                     "scope": entry.scope,
+                    "valid_from": entry.valid_from,
+                    "valid_to": entry.valid_to,
                     "tags": list(entry.tags),
                     "revoked": is_revoked,
                     "matches": hay.count(ql),
@@ -1566,6 +1608,24 @@ class MemoryStore:
     def _is_expired(self, entry: Entry) -> bool:
         return _is_expired(entry.expires_at) if entry.expires_at else False
 
+    def _is_historical(self, entry: Entry) -> bool:
+        """The claim stopped being true (valid_to in the past)."""
+        if not entry.valid_to:
+            return False
+        end = _ts(entry.valid_to)
+        if end is None:
+            return True  # unparseable window fails closed, like expires
+        return end <= datetime.now(timezone.utc).timestamp()
+
+    def _is_future(self, entry: Entry) -> bool:
+        """The claim is not true yet (valid_from in the future)."""
+        if not entry.valid_from:
+            return False
+        start = _ts(entry.valid_from)
+        if start is None:
+            return False
+        return start > datetime.now(timezone.utc).timestamp()
+
     def read_layers(self, layers: list[str], scope: str = "") -> dict:
         """Return the servable contents of the requested layers.
 
@@ -1586,6 +1646,8 @@ class MemoryStore:
             servable = self._servable(records)
         blocks: list[dict] = []
         expired: list[str] = []
+        historical: list[str] = []
+        future: list[str] = []
         for entry in servable:
             if entry.layer not in wanted:
                 continue
@@ -1597,6 +1659,12 @@ class MemoryStore:
                 continue
             if self._is_expired(entry):
                 expired.append(entry.entry_id)
+                continue
+            if self._is_historical(entry):
+                historical.append(entry.entry_id)
+                continue
+            if self._is_future(entry):
+                future.append(entry.entry_id)
                 continue
             if scope and str(getattr(entry, "scope", "") or "").strip() not in ("", scope):
                 continue
@@ -1624,6 +1692,8 @@ class MemoryStore:
             "revoked": sorted(ids),
             "revoked_sources": sorted(sources),
             "expired": expired,
+            "historical": historical,
+            "future": future,
             "unknown": unknown,
             "debug": {"unknown_total": sum(unknown.values())},
             "watermark": WATERMARK,

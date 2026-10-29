@@ -8,9 +8,9 @@
 
 **Author**: liubai — project **liu bai** (留白).
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
-**Version**: 0.7.4.
+**Version**: 0.7.5.
 
-> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.4 is the current source release; it is the version the v0.4 review response refers to.
+> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.5 is the current source release; it is the version the v0.4 review response refers to.
 
 ## Download and use in five minutes
 
@@ -46,6 +46,16 @@ Then pick how your agent talks to it:
   that was said once". Similarity retrieval cannot make that distinction.
 - **Python**: `from four_layer_memory import MemoryStore, Entry` — see
   [docs/INTEGRATING.md](docs/INTEGRATING.md) §2.
+- **Claims carry a validity window.** `Entry(valid_from=…, valid_to=…)` records
+  *when* a fact is true. The store serves only claims true **now**: a window that
+  has closed, or one that has not opened yet, is kept in the ledger and reported
+  by `read_layers()["historical"] / ["future"]`, reachable on demand with
+  `search(include_historical=True)`. Superseded facts are hidden, not deleted.
+- **The write path is measured, not asserted.** `python scripts/eval_memory.py`
+  runs a local, offline, dependency-free battery over the three properties no
+  public memory benchmark covers: write-gate precision, revoke residual rate and
+  ledger tamper detectability. It prints a JSON report and exits non-zero if any
+  of them regresses.
 - **CLI**: for poking at a store by hand; `approve` lives here because it is a
   host decision, not a model decision.
 

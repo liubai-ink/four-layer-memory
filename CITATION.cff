@@ -11,7 +11,7 @@ abstract: >-
   consolidation, snapshot-cursor handoff, and a signed audit ledger.
 authors:
   - name: "liubai"
-version: 0.7.4
+version: 0.7.5
 date-released: "2026-10-25"
 license: MIT
 doi: "10.5281/zenodo.23638826"

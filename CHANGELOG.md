@@ -2,6 +2,47 @@
 
 # Changelog
 
+## 0.7.5 - 2026-10-29
+
+### Dual timeline: a claim can be true only for a while
+
+Memory that only appends forces the reader to guess which of two contradictory
+facts still holds. Entries can now carry an explicit validity window:
+
+- `Entry(valid_from=…, valid_to=…)` (ISO date or datetime). `validate()` rejects
+  unparsable stamps and inverted windows (`valid_from > valid_to`).
+- The window is stored in the layer bullet (`` `valid_from: …` `` / `` `valid_to: …` ``),
+  survives `parse_layer_text`, ledger records and `export_bundle` / `import_bundle`.
+- What is served is what is true **now**: `read_layers()` skips closed and
+  not-yet-open claims and reports their ids under `historical` / `future`;
+  `search(..., include_historical=True)` reaches them on demand, and every hit
+  carries `valid_from` / `valid_to`. Nothing is deleted.
+- `audit` gains a `temporal` check: counts of historical/future entries and a
+  `valid_window_inverted` finding if a hand-edited bullet ever inverts a window.
+- CLI: `four-layer-memory add … --valid-from 2026-10-01 --valid-to 2026-11-01`.
+- `tests/test_dual_timeline.py`: 10 cases (rejection, servability, search,
+  bullet round-trip, export/import, audit, CLI).
+
+### First-party evaluation of the write path
+
+The published memory benchmarks measure what a system *recalls*; none of them
+measure whether it can be trusted *not* to remember. `scripts/eval_memory.py`
+measures the three claims this library actually makes, locally and offline:
+
+- **write-gate precision** - a labelled battery of clean writes (must be
+  admitted) and dirty writes (missing quote, wrong authority, unapproved layer A,
+  approval for a different text, medical/identity text, inverted window) that
+  must be refused;
+- **revoke residual rate** - after revoking through source events, how much is
+  still reachable through served text and default search (must be 0);
+- **ledger tamper detectability** - five mutations (edit, drop, splice,
+  truncate, forged head) that must each be caught at open time or in `audit`.
+
+It exits non-zero on regression, writes a JSON report with `--json`, and runs in
+CI on every push (`tests/test_eval_memory.py` asserts all three stay green).
+
+Full suite: 112 tests.
+
 ## 0.7.4 - 2026-10-29
 
 ### `init --from-bundle`: the portability claim is now real

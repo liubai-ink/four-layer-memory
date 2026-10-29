@@ -1,4 +1,5 @@
-# liu bai (留白): test helpers. Provenance watermark: liu bai.\n"""Shared test helpers."""
+# liu bai (留白): test helpers. Provenance watermark: liu bai.
+"""Shared test helpers."""
 from four_layer_memory import approval
 from four_layer_memory.store import Entry
 

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import admission, approval, signing
 from .layers import Layer, spec
-from .store import Entry, MemoryStore, _norm
+from .store import Entry, MemoryStore, _norm, _ts
 from .watermark import WATERMARK
 
 REQUIRED = ("state.json", "ledger.jsonl", "quarantine/pending.md")
@@ -105,6 +105,26 @@ def audit_store(root: str | Path) -> dict:
     problems.extend(f"structural: {f.get('code')} {f.get('detail') or f.get('counts') or ''}".strip()
                     for f in structural["findings"])
     checks["structural"] = structural
+
+    # -- temporal (dual timeline) ------------------------------------------
+    temporal: dict = {"ok": True, "findings": [], "historical": 0, "future": 0}
+    for layer in Layer:
+        for entry, _raw in store._parse_layer(layer)[0]:
+            start = _ts(entry.valid_from) if entry.valid_from else None
+            end = _ts(entry.valid_to) if entry.valid_to else None
+            if start is not None and end is not None and start > end:
+                temporal["findings"].append({"code": "valid_window_inverted",
+                                             "entry_id": entry.entry_id,
+                                             "layer": spec(layer).target})
+            if store._is_historical(entry):
+                temporal["historical"] += 1
+            elif store._is_future(entry):
+                temporal["future"] += 1
+    temporal["ok"] = not temporal["findings"]
+    if temporal["findings"]:
+        problems.extend(f"temporal: {f['code']} {f.get('entry_id')}"
+                        for f in temporal["findings"])
+    checks["temporal"] = temporal
 
     # -- content -----------------------------------------------------------
     content: dict = {"ok": True, "findings": []}

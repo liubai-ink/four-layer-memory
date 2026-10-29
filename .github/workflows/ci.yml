@@ -29,3 +29,6 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -q
+
+      - name: Evaluate the write path
+        run: python scripts/eval_memory.py --quiet

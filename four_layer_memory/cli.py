@@ -82,6 +82,8 @@ def cmd_add(args) -> int:
             source_event_id=args.source_event,
             scope=getattr(args, "scope", "") or "",
             expires_at=getattr(args, "expires_at", "") or "",
+            valid_from=getattr(args, "valid_from", "") or "",
+            valid_to=getattr(args, "valid_to", "") or "",
             approved=False,  # a write never grants approval by itself
         )
     )
@@ -275,6 +277,10 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--source-event", default="")
     a.add_argument("--scope", default="")
     a.add_argument("--expires-at", default="")
+    a.add_argument("--valid-from", default="",
+                   help="ISO date/datetime from which the claim is true")
+    a.add_argument("--valid-to", default="",
+                   help="ISO date/datetime after which the claim is no longer true")
     a.add_argument("--approved", action="store_true",
                    help="host approval of this write in the same call (layer A)")
 
