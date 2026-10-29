@@ -153,6 +153,12 @@ class Entry:
     # ``valid_from`` (or the moment it was written) onwards.  The replaced entry
     # stays in the ledger and stays reachable historically; it is no longer served.
     supersedes: str = ""
+    # v0.7.8 (R052): "experience" entries describe *how a task was done*; they
+    # can be copied later, and that is how a wrong memory spreads.  Their
+    # verdict lives in the ledger as an ``outcome`` event (record_outcome),
+    # never on the claim: the claim is immutable, the verdict is appended, and
+    # there is exactly one channel to audit.
+    kind: str = "fact"
 
     def validate(self) -> None:
         s = spec(self.layer)
@@ -186,6 +192,8 @@ class Entry:
             self.entry_id = digest
         if self.supersedes and self.supersedes == self.entry_id:
             raise StoreError("an entry cannot supersede itself")
+        if self.kind not in ("fact", "experience"):
+            raise StoreError(f"unknown kind: {self.kind!r} (use fact|experience)")
 
     def to_record(self) -> dict:
         return {
@@ -205,6 +213,7 @@ class Entry:
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
             "supersedes": self.supersedes,
+            "kind": self.kind,
             "revoked_at": self.revoked_at,
             "approved": bool(self.approved),
             "text_sha256": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
@@ -232,6 +241,7 @@ class Entry:
             valid_from=str(rec.get("valid_from", "")),
             valid_to=str(rec.get("valid_to", "")),
             supersedes=str(rec.get("supersedes", "")),
+            kind=str(rec.get("kind", "fact")),
         )
 
 
@@ -484,6 +494,12 @@ class MemoryStore:
         self._atomic_write(self.resolved_path, text)
         return len(out)
 
+    def _committed_ids(self, records: list[dict] | None = None) -> set[str]:
+        """Entry ids that a ledger ``write``/``approve`` event actually claims."""
+        records = records if records is not None else self.ledger_records()
+        return {str(r.get("entry_id")) for r in records
+                if r.get("event") in ("write", "approve")}
+
     def _servable(self, records: list[dict] | None = None) -> list[Entry]:
         """Entries the ledger can prove were committed (write/approve + bind)."""
         records = records if records is not None else self.ledger_records()
@@ -525,6 +541,7 @@ class MemoryStore:
             "approval_fingerprint": approval.fingerprint(self.root),
             "authority_mix": self.authority_mix(records),
             "provenance": self.provenance_coverage(records),
+            "experience": self.experience_stats(records),
             "watermark": WATERMARK,
         }
 
@@ -582,6 +599,57 @@ class MemoryStore:
         }
 
     # -- layer files --------------------------------------------------------
+    def _outcomes(self, records: list[dict] | None = None) -> dict[str, str]:
+        """Fold ``outcome`` ledger events into ``{entry_id: ok|failed}`` (last wins)."""
+        records = records if records is not None else self.ledger_records()
+        out: dict[str, str] = {}
+        for rec in records:
+            if rec.get("event") != "outcome":
+                continue
+            verdict = "ok" if rec.get("ok") else "failed"
+            for eid in (rec.get("entry_ids") or []):
+                eid = str(eid or "")
+                if eid:
+                    out[eid] = verdict
+        return out
+
+    def experience_stats(self, records: list[dict] | None = None) -> dict:
+        """How many experience entries have been scored after use (v0.7.8, R052).
+
+        Unscored experience is the dangerous kind: it was copied once and never
+        checked.  Reported as debt by the audit, not enforced at the write path.
+        """
+        records = records if records is not None else self.ledger_records()
+        outcomes = self._outcomes(records)
+        revoked, revoked_sources = self.revoked_sets()
+        superseded = self._superseded_ids(records)
+        served = []
+        for entry in self._servable(records):
+            if entry.entry_id in revoked:
+                continue
+            if entry.source_event_id and entry.source_event_id in revoked_sources:
+                continue
+            if entry.derived_from and set(entry.derived_from) & (revoked | revoked_sources):
+                continue
+            if entry.entry_id in superseded:
+                continue
+            if (self._is_expired(entry) or self._is_historical(entry)
+                    or self._is_future(entry)):
+                continue
+            served.append(entry)
+        experiences = [e for e in served if e.kind == "experience"]
+        labelled = [e for e in experiences if e.entry_id in outcomes]
+        failed = [e for e in labelled if outcomes[e.entry_id] == "failed"]
+        return {
+            "total": len(experiences),
+            "labelled": len(labelled),
+            "failed": len(failed),
+            "label_coverage": (round(len(labelled) / len(experiences), 4)
+                               if experiences else 1.0),
+            "facts_scored": sum(1 for e in served
+                                if e.kind != "experience" and e.entry_id in outcomes),
+        }
+
     def _bullet(self, entry: Entry) -> str:
         bullet = f"- {entry.text}"
         if entry.source:
@@ -600,6 +668,8 @@ class MemoryStore:
             bullet += f"  `valid_to: {entry.valid_to}`"
         if entry.supersedes:
             bullet += f"  `supersedes: {entry.supersedes}`"
+        if entry.kind and entry.kind != "fact":
+            bullet += f"  `kind: {entry.kind}`"
         if entry.tags:
             bullet += f"  `tags: {','.join(entry.tags)}`"
         return bullet
@@ -629,6 +699,8 @@ class MemoryStore:
             bullet += f"  `valid_to: {entry.valid_to}`"
         if entry.supersedes:
             bullet += f"  `supersedes: {entry.supersedes}`"
+        if entry.kind and entry.kind != "fact":
+            bullet += f"  `kind: {entry.kind}`"
         if entry.tags:
             bullet += f"  `tags: {','.join(entry.tags)}`"
         return bullet
@@ -676,6 +748,7 @@ class MemoryStore:
                 valid_from=meta.get("valid_from", ""),
                 valid_to=meta.get("valid_to", ""),
                 supersedes=meta.get("supersedes", ""),
+                kind=meta.get("kind", "fact"),
                 approved="approved" in tags,
             )
             blocks.append((entry, list(current["raw"])))
@@ -710,7 +783,7 @@ class MemoryStore:
     def search(self, query: str, layer: str | None = None,
                include_revoked: bool = False, include_expired: bool = False,
                include_historical: bool = False, hybrid: bool = False,
-               limit: int = 20) -> list[dict]:
+               include_failed: bool = False, limit: int = 20) -> list[dict]:
         """Retrieve entries by text, keeping their authority and revocation state.
 
         This is deliberately *not* similarity search over a transcript: the
@@ -725,6 +798,7 @@ class MemoryStore:
         ql = q.casefold()
         revoked, revoked_sources = self.revoked_sets()
         superseded = self._superseded_ids()
+        outcomes = self._outcomes()
         if layer:
             layers = [str(spec(layer).layer.value)]
         else:
@@ -751,6 +825,12 @@ class MemoryStore:
                 if not include_historical:
                     if self._is_historical(entry) or self._is_future(entry):
                         continue
+                outcome = outcomes.get(entry.entry_id, "")
+                if outcome == "failed" and not include_failed:
+                    # R052: an experience that failed when used must not be
+                    # copied again.  It stays in the ledger (auditable) but is
+                    # not served; --include-failed is for audits only.
+                    continue
                 out.append({
                     "entry_id": entry.entry_id,
                     "layer": lname,
@@ -767,6 +847,8 @@ class MemoryStore:
                     "revoked": is_revoked,
                     "matches": hits,
                     "superseded_by": superseded.get(entry.entry_id, ""),
+                    "kind": entry.kind,
+                    "outcome": outcome,
                 })
         if hybrid:
             from .bm25 import bm25_rank
@@ -1218,6 +1300,11 @@ class MemoryStore:
 
     # -- quarantine --------------------------------------------------------
     def _write_quarantine(self, entry: Entry, reason: str) -> None:
+        open_ids = {str(q.get("entry_id") or "") for q in self.quarantine_entries()}
+        if entry.entry_id in open_ids:
+            # A write and its approval for the same new id both get rejected by
+            # the same rule; parking the entry twice only muddies the queue.
+            return
         record = {
             **entry.to_record(),
             "reason": reason,
@@ -1346,6 +1433,15 @@ class MemoryStore:
     def _repair_approval(self, rec: dict) -> None:
         """Complete a ledger-committed approval whose materialisation was cut short."""
         entry = Entry.from_record(rec)
+        ids, sources = self.revoked_sets()
+        dropped = set()
+        for idset in self._dropped_ids().values():
+            dropped |= idset
+        if (entry.entry_id in ids
+                or entry.entry_id in dropped
+                or (entry.source_event_id and entry.source_event_id in sources)
+                or (set(entry.derived_from) & (ids | sources))):
+            return
         layer = str(rec.get("layer", "")).upper()
         path = self.path_for(layer)
         current = path.read_text(encoding="utf-8") if path.exists() else self._header(layer)
@@ -1375,6 +1471,8 @@ class MemoryStore:
         with self._lock():
             self._reload()
             prior = self._find_record(entry_id)
+            if not approval.verify(self.root, approval_record):
+                raise StoreError("approval record does not verify with the host key")
             if prior is not None and prior.get("event") == "approve":
                 # F03: a crash after the approve record but before bind/resolved
                 # is repaired from the ledger instead of duplicating the entry.
@@ -1389,24 +1487,42 @@ class MemoryStore:
                 raise StoreError(f"no quarantined entry {entry_id}")
             if entry_id in self._resolved_ids():
                 raise StoreError(f"already resolved: {entry_id}")
-            if not approval.verify(self.root, approval_record):
-                raise StoreError("approval record does not verify with the host key")
             if approval_record.get("entry_id") != entry_id:
                 raise StoreError("approval record is for a different entry")
             found = match[0]
+            # Every claim field the candidate carried must survive the
+            # quarantine -> approve rebuild: the ledger is append-only, so
+            # a field dropped here is dropped for good (supersedes keeps
+            # the replaced claim out of service; valid_from/valid_to gate
+            # it in time; kind separates experience from fact).
+            layer_name = str(found.get("layer") or "D")
+            if layer_name.upper() == "A":
+                # R02: layer A only ever accepts an explicit, quoted claim.
+                authority, evidence = "user-explicit", "quote"
+            else:
+                # do not launder a machine paraphrase into a user quote: the
+                # rewrite ledger has to stay honest about where a claim came
+                # from (R049).
+                authority = str(found.get("authority") or "user-explicit")
+                evidence = str(found.get("evidence") or "quote")
             entry = Entry(
-                layer=str(found.get("layer") or "D"),
+                layer=layer_name,
                 text=str(found.get("text") or ""),
                 source=str(found.get("source") or "quarantine"),
                 at=str(found.get("at") or now_iso()),
-                tags=["approved", f"approver:{approver}"],
-                authority="user-explicit",
-                evidence="quote",
+                tags=sorted(set(str(t) for t in (found.get("tags") or []))
+                           | {"approved", f"approver:{approver}"}),
+                authority=authority,
+                evidence=evidence,
                 lifecycle=str(found.get("lifecycle") or "standing"),
                 source_event_id=str(found.get("source_event_id") or ""),
                 derived_from=list(found.get("derived_from") or []),
                 scope=str(found.get("scope") or ""),
                 expires_at=str(found.get("expires_at") or ""),
+                valid_from=str(found.get("valid_from") or ""),
+                valid_to=str(found.get("valid_to") or ""),
+                supersedes=str(found.get("supersedes") or ""),
+                kind=str(found.get("kind") or "fact"),
                 entry_id=entry_id,
                 approved=True,
             )
@@ -1723,9 +1839,14 @@ class MemoryStore:
         """
         records = records if records is not None else self.ledger_records()
         revoked, revoked_sources = self.revoked_sets()
+        outcomes = self._outcomes(records)
         superseded: dict[str, str] = {}
         for entry in self._servable(records):
             if not entry.supersedes:
+                continue
+            if outcomes.get(entry.entry_id) == "failed":
+                # R052: a replacement that failed when used cannot keep the old
+                # claim out of service; same rule as revoking it.
                 continue
             if entry.entry_id in revoked or (
                     entry.source_event_id and entry.source_event_id in revoked_sources):
@@ -1760,13 +1881,67 @@ class MemoryStore:
         return {"noop": True, "entry_id": entry.entry_id, "layer": entry.layer,
                 "reason": reason or "noop: no new information"}
 
-    def read_layers(self, layers: list[str], scope: str = "") -> dict:
+    def record_outcome(self, entry_ids: list[str], ok: bool, reason: str = "") -> dict:
+        """Record how experience entries performed when they were used (R052).
+
+        Retrieving an old experience and copying it is how a wrong memory spreads;
+        so an entry can be scored *after* use and taken out of service when it
+        failed.  The score is a ledger event (like ``noop``): the claim itself is
+        immutable, the verdict is appended and can be superseded by a later one.
+        """
+        ids = list(dict.fromkeys(
+            str(x or "").strip() for x in (entry_ids or []) if str(x or "").strip()))
+        if not ids:
+            raise StoreError("record_outcome needs at least one entry id")
+        with self._lock():
+            self._reload()
+            records = self.ledger_records()
+            committed = {str(r.get("entry_id")) for r in records
+                          if r.get("event") in ("write", "approve")}
+            unknown = [x for x in ids if x not in committed]
+            if unknown:
+                raise StoreError(
+                    f"unknown entry id(s): {', '.join(unknown[:5])}")
+            served = {e.entry_id: e for e in self._servable(records)}
+            unbound = [x for x in ids if x not in served]
+            if unbound:
+                # A write whose transaction never bound (crash between the
+                # ledger append and the bind) is not live.  Scoring it would
+                # hide the entry for good once recover() runs.
+                raise StoreError(
+                    "entry is not live (unbound transaction? run recover first): "
+                    + ", ".join(unbound[:5]))
+            facts = [x for x in ids if served[x].kind != "experience"]
+            if facts:
+                # R052 boundary: a fact is decided at the write path, never
+                # by whether using it later turned out convenient.
+                raise StoreError(
+                    "outcome scoring is for experience entries only; "
+                    "facts are decided at the write path: "
+                    + ", ".join(facts[:5]))
+            verdict = "used: ok" if ok else "used: failed"
+            self._ledger({
+                "event": "outcome",
+                "tx": secrets.token_hex(6),
+                "entry_ids": ids,
+                "ok": bool(ok),
+                "reason": reason or verdict,
+            })
+            self._save_state()
+        return {"ok": bool(ok), "entry_ids": ids, "reason": reason or verdict}
+
+    def read_layers(self, layers: list[str], scope: str = "",
+                    include_failed: bool = False) -> dict:
         """Return the servable contents of the requested layers.
 
         F01: a truncated ledger blocks every read.  F06: text comes from the
         ledger's committed records, never from a file that changed on disk; a
         file whose bytes diverge from the ledger is treated as untrusted, and
         unknown material is reported as a count only (host diagnostics).
+
+        Failed experience is named in ``failed`` and not served.  The audit
+        needs to read what it said, so ``include_failed=True`` emits those
+        blocks with ``"failed": True``; normal loads never pass that flag.
         """
         wanted = [str(x).upper() for x in layers]
         for layer in wanted:
@@ -1779,11 +1954,13 @@ class MemoryStore:
             ids, sources = self._closure(records)
             servable = self._servable(records)
             superseded: dict[str, str] = self._superseded_ids(records)
+            outcomes = self._outcomes(records)
         blocks: list[dict] = []
         expired: list[str] = []
         historical: list[str] = []
         future: list[str] = []
         superseded_out: list[str] = []
+        failed: list[str] = []
         for entry in servable:
             if entry.layer not in wanted:
                 continue
@@ -1804,6 +1981,17 @@ class MemoryStore:
                 continue
             if self._is_future(entry):
                 future.append(entry.entry_id)
+                continue
+            outcome = outcomes.get(entry.entry_id, "")
+            if outcome == "failed":
+                failed.append(entry.entry_id)
+                if not include_failed:
+                    continue
+                if scope and str(getattr(entry, "scope", "") or "").strip() not in ("", scope):
+                    continue
+                blocks.append({"layer": entry.layer, "entry_id": entry.entry_id,
+                               "text": self._bullet(entry),
+                               "record": entry.to_record(), "failed": True})
                 continue
             if scope and str(getattr(entry, "scope", "") or "").strip() not in ("", scope):
                 continue
@@ -1834,6 +2022,7 @@ class MemoryStore:
             "historical": historical,
             "future": future,
             "superseded": sorted(superseded_out),
+            "failed": failed,
             "unknown": unknown,
             "debug": {"unknown_total": sum(unknown.values())},
             "watermark": WATERMARK,
@@ -1893,11 +2082,14 @@ class MemoryStore:
                 "question": s.question,
                 "body": self.path_for(layer).read_text(encoding="utf-8"),
             }
-        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # A bundle is a portable artifact: keep it pure ASCII (unicode escapes)
+        # so readers that open it with the platform's default encoding (cp936 on
+        # Windows) do not die on the provenance note's CJK characters.
+        out.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
         return out
 
     def import_bundle(self, bundle: str | Path, approver: str = "host",
-                      force: bool = False) -> dict:
+                      force: bool = False, trust: bool = False) -> dict:
         """Rebuild this store from an ``export_bundle`` payload.
 
         What travels is the *record*, not the signatures.  The exporter's
@@ -1917,6 +2109,11 @@ class MemoryStore:
         source, because bullet metadata does not carry ``source_event_id``.
         The chain is re-verified from the records themselves: the bundle's
         ``ledger_integrity`` field is the exporter's claim, not evidence.
+
+        A bundle is also a *bulk write channel* (R051): unless the host passes
+        ``trust=True``, replaying an ``approve`` record does not mint a fresh
+        approval here -- the entry is replayed as an ordinary unapproved write
+        and therefore parks in quarantine for a human decision.
         """
         bundle = Path(bundle)
         try:
@@ -1943,8 +2140,11 @@ class MemoryStore:
 
         revoked = set(str(x) for x in (payload.get("revoked") or []))
         revoke_sources: list[str] = []
-        imported = reapproved = skipped = 0
+        imported = reapproved = skipped = outcomes_replayed = 0
         failures: list[dict] = []
+        needs_review: list[str] = []
+        pending_before = {str(q.get("entry_id") or "")
+                          for q in self.quarantine_entries()}
         for rec in records:
             event = str(rec.get("event") or "")
             if event in ("write", "approve"):
@@ -1953,29 +2153,89 @@ class MemoryStore:
                     if not entry.text:
                         skipped += 1
                         continue
-                    before = len(self.ledger_records())
-                    if event == "approve":
+                    was_committed = entry.entry_id in self._committed_ids()
+                    if event == "approve" and trust:
                         record = approval.mint(
                             self.root, entry_id=entry.entry_id, text=entry.text,
                             source_event_id=entry.source_event_id, approver=approver)
                         entry.approved = True
                         self.add(entry, approval_record=record)
-                        reapproved += 1
                     else:
                         entry.approved = False
                         self.add(entry)
-                    if len(self.ledger_records()) > before:
+                    if (not was_committed
+                            and entry.entry_id in self._committed_ids()):
+                        # count entries that actually became live: replaying the
+                        # same bundle twice must not read as a fresh import, and
+                        # a quarantined add is debt, not an import.
                         imported += 1
+                        if event == "approve" and trust:
+                            reapproved += 1
                     else:
                         skipped += 1
                 except StoreError as exc:
                     skipped += 1
                     failures.append({"entry_id": str(rec.get("entry_id") or ""),
                                      "error": str(exc)})
+                    if "cannot supersede" in str(exc):
+                        # the claim names a predecessor this store never got:
+                        # park it for a human instead of dropping it.
+                        try:
+                            self._write_quarantine(
+                                Entry.from_record(rec),
+                                str(exc))
+                        except StoreError:
+                            pass
             elif event == "revoke" and rec.get("source_event_id"):
                 revoke_sources.append(str(rec["source_event_id"]))
         for source in revoke_sources:
             self.revoke(source)
+        # A bundle carries its review queue too (docs/PORTABILITY.md): claims that
+        # were pending at export time must not vanish here. The ledger is the
+        # authority; the markdown file is only a rendering of it.
+        resolved_ids = self._resolved_ids()
+        for rec in records:
+            if str(rec.get("event") or "") != "quarantine":
+                continue
+            eid = str(rec.get("entry_id") or "")
+            if not eid or eid in resolved_ids or eid in self._committed_ids():
+                continue
+            try:
+                queued = Entry.from_record(rec)
+            except StoreError:
+                continue
+            if not queued.text:
+                continue
+            try:
+                self._write_quarantine(
+                    queued, str(rec.get("reason") or "carried in bundle"))
+            except StoreError:
+                continue
+        # A bundle carries verdicts too: export_bundle ships the whole ledger.
+        # Replay ``outcome`` events after the entries exist, or an exported
+        # failed experience comes back served on the far side (R052 blocker).
+        for rec in records:
+            if str(rec.get("event") or "") != "outcome":
+                continue
+            ids = [str(x or "") for x in (rec.get("entry_ids") or []) if str(x or "")]
+            if not ids:
+                continue
+            try:
+                self.record_outcome(ids, ok=bool(rec.get("ok")),
+                                    reason=str(rec.get("reason") or ""))
+                outcomes_replayed += 1
+            except StoreError:
+                # an id still in quarantine has no committed record yet; its
+                # verdict cannot be replayed and an approval starts it unlabelled.
+                continue
+        # R051/T13: anything that ended up waiting for a human is in
+        # needs_review -- including ``write`` records that quarantined, not just
+        # withheld approvals.
+        pending_after = {str(q.get("entry_id") or "")
+                         for q in self.quarantine_entries()}
+        for eid in sorted(pending_after - pending_before):
+            if eid:
+                needs_review.append(eid)
 
         origin = payload.get("state") or {}
         with self._lock():
@@ -1989,6 +2249,9 @@ class MemoryStore:
                 "imported": imported,
                 "reapproved": reapproved,
                 "skipped": skipped,
+                "trust": bool(trust),
+                "needs_review": list(needs_review),
+                "outcomes_replayed": outcomes_replayed,
             })
             self.state.session_id = str(origin.get("session_id") or self.state.session_id)
             self.state.last_anchor_ref = str(origin.get("last_anchor_ref") or "")
@@ -2009,6 +2272,9 @@ class MemoryStore:
             "imported": imported,
             "reapproved": reapproved,
             "skipped": skipped,
+            "trust": bool(trust),
+            "needs_review": needs_review,
+            "outcomes_replayed": outcomes_replayed,
             "bundle_revoked": len(revoked),
             "revoked_total": len(ids),
             "revoked_sources": sorted(sources),
@@ -2018,7 +2284,9 @@ class MemoryStore:
             "bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
             "approval_fingerprint": approval.fingerprint(self.root),
             "failures": failures,
-            "note": "layer-A approvals are re-minted by this host; the exporter's "
-                    "signatures are intentionally not portable",
+            "note": ("layer-A approvals are re-minted by this host; the exporter's "
+                     "signatures are intentionally not portable") if trust else
+                    ("untrusted bundle: approvals are not re-minted; entries that "
+                     "need a host approval are parked in quarantine (needs_review)"),
         }
 

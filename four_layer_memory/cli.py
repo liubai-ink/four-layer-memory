@@ -57,7 +57,8 @@ def cmd_init(args) -> int:
         # replayed: layer-A claims are re-approved by *this* host or not at all.
         report = store.import_bundle(args.from_bundle,
                                      approver=getattr(args, "approver", "host"),
-                                     force=bool(getattr(args, "force", False)))
+                                     force=bool(getattr(args, "force", False)),
+                                     trust=bool(getattr(args, "trust_bundle", False)))
         status["import"] = report
     print(json.dumps(status, ensure_ascii=False, indent=2))
     return 0
@@ -76,7 +77,10 @@ def cmd_search(args) -> int:
         args.query,
         layer=(args.layer or None),
         hybrid=bool(getattr(args, "hybrid", False)),
+        include_revoked=bool(getattr(args, "include_revoked", False)),
+        include_expired=bool(getattr(args, "include_expired", False)),
         include_historical=bool(getattr(args, "include_historical", False)),
+        include_failed=bool(getattr(args, "include_failed", False)),
         limit=args.limit,
     )
     print(json.dumps({"query": args.query,
@@ -100,6 +104,7 @@ def cmd_add(args) -> int:
         valid_from=getattr(args, "valid_from", "") or "",
         valid_to=getattr(args, "valid_to", "") or "",
         supersedes=getattr(args, "supersedes", "") or "",
+        kind=getattr(args, "kind", "fact") or "fact",
         approved=False,  # a write never grants approval by itself
     )
     if getattr(args, "noop", False):
@@ -135,6 +140,23 @@ def cmd_add(args) -> int:
     print(json.dumps({"added": e.text, "layer": e.layer, "quarantined": bool(pending),
                       "accepted": accepted, "entry_id": e.entry_id,
                       "watermark": WATERMARK}, ensure_ascii=False))
+    return 0
+
+
+def cmd_record_outcome(args) -> int:
+    """Score experience entries after use (R052).
+
+    Retrieving an old experience and copying it is how a wrong memory spreads,
+    so the store lets an experience be judged by what happened when it was used
+    and stops serving it when it failed.  Only experience entries take part;
+    facts are decided at the write path, never by how convenient they were.
+    """
+    store = MemoryStore(args.root)
+    ids = [x.strip() for raw in (args.entry_id or []) for x in raw.split(",")]
+    ids = [x for x in ids if x]
+    result = store.record_outcome(ids, ok=bool(args.ok),
+                                  reason=getattr(args, "reason", "") or "")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -294,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     ini.add_argument("--approver", default="host")
     ini.add_argument("--force", action="store_true",
                      help="replay into a store that already has content")
+    ini.add_argument("--trust-bundle", action="store_true", dest="trust_bundle",
+                     help="re-mint the bundle's approvals here (default: replay them "
+                          "as unapproved writes, which parks layer A in quarantine)")
 
     a = sub.add_parser("add")
     a.add_argument("layer", choices=[l.value for l in Layer])
@@ -316,6 +341,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--supersedes", default="",
                    help="entry id this claim replaces (write-side merge); the old "
                         "entry stays in the ledger but stops being served")
+    a.add_argument("--kind", default="fact", choices=["fact", "experience"],
+                   help="experience entries are copied when reused, so they can be "
+                        "scored after use (record-outcome) and taken out of service")
     a.add_argument("--noop", action="store_true",
                    help="record that this candidate was deliberately not written "
                         "(a NOOP decision) instead of adding it")
@@ -341,6 +369,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="rank by BM25 over tokens (CJK bigrams included) instead of "
                         "requiring the query to appear verbatim")
     s.add_argument("--include-historical", action="store_true")
+    s.add_argument("--include-revoked", action="store_true")
+    s.add_argument("--include-expired", action="store_true")
+    s.add_argument("--include-failed", action="store_true",
+                   help="include experience entries that failed when used "
+                        "(for audits only)")
 
     sub.add_parser("status")
 
@@ -382,6 +415,13 @@ def main(argv: list[str] | None = None) -> int:
     rv.add_argument("source_event")
 
     sub.add_parser("audit")
+    ro = sub.add_parser("record-outcome")
+    ro.add_argument("entry_id", nargs="+", help="one or more entry ids")
+    g = ro.add_mutually_exclusive_group(required=True)
+    g.add_argument("--ok", action="store_true", dest="ok")
+    g.add_argument("--failed", action="store_true")
+    ro.add_argument("--reason", default="")
+
 
     cp = sub.add_parser("compact")
     cp.add_argument("--apply", action="store_true",
@@ -405,8 +445,13 @@ def main(argv: list[str] | None = None) -> int:
         "quarantine": cmd_quarantine, "calibrate": cmd_calibrate,
         "revoke": cmd_revoke, "demo": cmd_demo, "compact": cmd_compact,
         "search": cmd_search,
+        "record-outcome": cmd_record_outcome,
     }[args.cmd]
-    return fn(args)
+    try:
+        return fn(args)
+    except StoreError as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        return 2
 
 
 if __name__ == "__main__":

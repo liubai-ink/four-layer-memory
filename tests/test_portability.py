@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path
 
 from four_layer_memory import approval, cli, signing
+from four_layer_memory.audit import audit_store
 from four_layer_memory.store import Entry, MemoryStore, StoreError
 
 from .helpers import add_a
@@ -58,11 +59,24 @@ class ImportBundleTest(unittest.TestCase):
         src.export_bundle(bundle)
         return src, bundle
 
+    def test_bundle_stays_ascii_clean(self) -> None:
+        """A portable artifact must survive a reader bound to a legacy locale.
+
+        The provenance note carries the joint signature 留白 and an em dash; if
+        the bundle stored them as raw UTF-8, ``Path.read_text()`` on a Windows
+        cp936 machine would raise UnicodeDecodeError before any verification ran.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _src, bundle = self._source(tmp)
+            raw = bundle.read_bytes()
+            self.assertEqual(raw, raw.decode("ascii").encode("ascii"))
+            self.assertEqual("liu bai", json.loads(raw.decode("ascii"))["watermark"])
+
     def test_round_trip_rebuilds_the_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             src, bundle = self._source(tmp)
             dst = new_store(tmp, "target")
-            report = dst.import_bundle(bundle)
+            report = dst.import_bundle(bundle, trust=True)
 
             self.assertEqual(4, report["imported"], report)
             self.assertEqual(1, report["reapproved"], report)
@@ -92,6 +106,28 @@ class ImportBundleTest(unittest.TestCase):
             code, out = run_cli(["--root", str(dst.root), "audit"])
             report = json.loads(out[out.index("{"):])
             self.assertTrue(report["ok"], report)
+
+    def test_untrusted_bundle_parks_layer_a_in_quarantine(self) -> None:
+        """R051: a bundle is a bulk write channel.
+
+        Replaying an ``approve`` record must not mint an approval here, or a
+        stolen bundle could widen layer A anywhere it is imported.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _src, bundle = self._source(tmp)
+            dst = new_store(tmp, "target")
+            report = dst.import_bundle(bundle)
+
+            self.assertEqual(3, report["imported"], report)
+            self.assertEqual(0, report["reapproved"], report)
+            self.assertEqual(1, len(report["needs_review"]), report)
+            self.assertFalse(report["trust"], report)
+            self.assertEqual([], dst._parse_layer("A")[0])
+            pending = dst.quarantine_entries()
+            self.assertEqual(1, len(pending))
+            self.assertEqual("A", pending[0]["layer"])
+            self.assertFalse(pending[0]["approved"])
+            self.assertTrue(audit_store(dst.root)["ok"])
 
     def test_bundle_without_watermark_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,7 +161,8 @@ class ImportBundleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _src, bundle = self._source(tmp)
             root = str(Path(tmp) / "cli-target")
-            code, out = run_cli(["--root", root, "init", "--from-bundle", str(bundle)])
+            code, out = run_cli(["--root", root, "init", "--trust-bundle",
+                                 "--from-bundle", str(bundle)])
             self.assertEqual(0, code, out)
             status = json.loads(out)
             self.assertEqual(4, status["import"]["imported"])

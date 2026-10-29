@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import admission, approval, signing
 from .layers import Layer, spec
-from .store import Entry, MemoryStore, _norm, _ts
+from .store import STORE_FORMAT, Entry, MemoryStore, _norm, _ts
 from .watermark import WATERMARK
 
 REQUIRED = ("state.json", "ledger.jsonl", "quarantine/pending.md")
@@ -40,6 +40,7 @@ INFERRED_SHARE_MAX = 0.15   # derived (inferred + model-generated) share of serv
 INFERRED_SHARE_MIN_ENTRIES = 20  # below this a share is noise, not a signal
 JUDGED_LAYERS = ("A", "B", "C")  # D is a chronicle of facts, not a claim source
 PROVENANCE_TARGET = 0.90    # rewrites (summary/paraphrase) that must point back at a source
+EXPERIENCE_LABEL_TARGET = 0.5  # experience entries that carry an outcome (R052)
 
 
 def _scan(text: str, label: str) -> list[dict]:
@@ -183,6 +184,22 @@ def audit_store(root: str | Path) -> dict:
     # debt rather than failed; new writes are guarded at cmd_add (FLM_REQUIRE_ANCHOR).
     checks["provenance"] = provenance
 
+    # -- experience (a copied mistake spreads) -----------------------------
+    stats = store.experience_stats(_records)
+    experience: dict = {"ok": True, "findings": [], "target": EXPERIENCE_LABEL_TARGET,
+                        **stats}
+    experience["meets_target"] = stats["label_coverage"] >= EXPERIENCE_LABEL_TARGET
+    if stats["total"] and not experience["meets_target"]:
+        # Debt, not failure: a fresh store has no experience to score, and an
+        # unscored experience is exactly the kind that was copied once and never
+        # checked.  Refusing the whole audit would make the check unusable on a
+        # live store; reporting the count keeps the debt visible.
+        experience["findings"].append({"code": "experience_unlabelled",
+                                      "labelled": stats["labelled"],
+                                      "total": stats["total"],
+                                      "target": EXPERIENCE_LABEL_TARGET})
+    checks["experience"] = experience
+
     # -- content -----------------------------------------------------------
     content: dict = {"ok": True, "findings": []}
     findings: list[dict] = []
@@ -318,6 +335,6 @@ def _report(checks: dict, problems: list[str]) -> dict:
         "ok": ok,
         "checks": checks,
         "problems": problems,
-        "store_version": MemoryStore.VERSION if hasattr(MemoryStore, "VERSION") else "0.7.2",
+        "store_version": STORE_FORMAT,
         "watermark": WATERMARK,
     }

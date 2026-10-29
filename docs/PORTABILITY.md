@@ -28,7 +28,7 @@
 | 契约面 | `prompts/LOADING.md`（加载/写入/整合规则）、四轴准入规则 | 随包分发，读它 |
 
 - 迁移流程：`export --out <bundle>` → 空白机 `init --from-bundle <bundle>` → `audit` → `memory_load`。
-- v0.7.4 起这条路径是**真的**：`init --from-bundle` 以 bundle 的 ledger records 为重放源（bullet 元数据不含 `source_event_id`），A 层由**导入方**重新走批准通道签发（旧签名绑定导出方的宿主键，故意不可携带），撤销闭包按 `source_event_id` 重建；见 `tests/test_portability.py`。
+- 自 v0.7.4 这条路径是**真的**：`init --from-bundle` 以 bundle 的 ledger records 为重放源（bullet 元数据不含 `source_event_id`），撤销闭包按 `source_event_id` 重建。**v0.7.8 起默认不重铸导出方的批准**（R051：bundle 是一条写入通道）：旧签名绑定导出方的宿主键、故意不可携带，而“用导入方的键重铸”等于让一个偷来的 bundle 在任意导入主机上打开 A 层；需要宿主批准的条目落进隔离区并列进 `needs_review`。来源可信时用 `--trust-bundle`（库调用 `import_bundle(..., trust=True)`）显式重铸，导入记录进 ledger。见 `tests/test_portability.py`。
 - 不依赖任何平台 SDK；宿主可以是 DSH、别的 agent 框架、或任一支 MCP client。
 
 ## 3. Evidence plan（写进附录，标 proposed）

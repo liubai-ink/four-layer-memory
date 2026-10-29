@@ -55,6 +55,7 @@ THRESHOLDS = {
     "write_gate_precision": 1.0,
     "revoke_residual_rate": 0.0,
     "tamper_detect_rate": 1.0,
+    "experience_pass_rate": 1.0,
 }
 
 
@@ -277,8 +278,77 @@ def measure_tamper_detectability() -> dict:
 
 
 # ---------------------------------------------------------------- main
+# ---------------------------------------------------------------- metric 4
+def measure_experience_gating() -> dict:
+    """A failed experience must not be served again (R052).
+
+    The failure mode is *experience following*: a retrieved memory that looks
+    similar is copied, so a wrong one spreads.  Scoring an experience after use
+    and refusing to serve the failed ones is the write path's answer; this metric
+    checks that the answer actually holds across the read paths (served text,
+    search, stats, audit).
+    """
+    base = Path(tempfile.mkdtemp())
+    try:
+        store = _fresh(base / "store")
+        good = Entry(layer="D", text="Deploy went out from the checklist.",
+                     source="m:ok", authority="observed", evidence="quote",
+                     kind="experience")
+        bad = Entry(layer="D", text="Deploy went out from memory alone.",
+                    source="m:bad", authority="observed", evidence="quote",
+                    kind="experience")
+        store.add(good)
+        store.add(bad)
+        before = store.read_layers(["D"])["text"]
+        store.record_outcome([bad.entry_id], ok=False, reason="deploy broke")
+        after = store.read_layers(["D"])["text"]
+        hits = store.search("Deploy went out")
+        ids = {h["entry_id"] for h in hits}
+        audit = audit_store(store.root)
+        stats = store.experience_stats()
+
+        # A bundle is a migration path.  If the verdict does not travel, the
+        # import silently re-arms the very experience this metric forbids.
+        bundle = store.export_bundle(base / "roundtrip.bundle")
+        moved = _fresh(base / "moved")
+        moved.import_bundle(bundle, trust=True)
+        moved_served = moved.read_layers(["D"])["text"]
+        moved_failed = moved.read_layers(["D"])["failed"]
+
+        # A claim waiting for a human must not vanish with the store.
+        store.add(Entry(layer="A", text="Never deploy on Friday.",
+                        source="m:pending", authority="observed",
+                        evidence="summary"))
+        pending_bundle = store.export_bundle(base / "pending.bundle")
+        parked = _fresh(base / "parked")
+        parked_report = parked.import_bundle(pending_bundle)
+        parked_pending = parked.quarantine_entries()
+
+        cases = {
+            "served_before_failure": bad.text in before,
+            "hidden_after_failure": bad.text not in after,
+            "good_still_served": good.text in after,
+            "search_hides_failed": bad.entry_id not in ids,
+            "stats_count": (stats["total"] == 2 and stats["failed"] == 1
+                            and stats["labelled"] == 1),
+            "audit_ok": bool(audit["ok"]),
+            "bundle_keeps_verdict": (bad.text not in moved_served
+                                     and bad.entry_id in moved_failed),
+            "bundle_carries_review_queue": (bool(parked_pending)
+                                            and bool(parked_report.get("needs_review"))),
+        }
+        rate = sum(1 for v in cases.values() if v) / len(cases)
+        return {"metric": "experience_pass_rate",
+                "pass_rate": round(rate, 4), "cases": cases, "stats": stats}
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- main
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Evaluate the three write-path claims.")
+    ap = argparse.ArgumentParser(
+        description="Evaluate the four write-path claims: admission, revocation, "
+                    "ledger auditability, and experience scoring.")
     ap.add_argument("--json", default="", help="write the full report to this path")
     ap.add_argument("--quiet", action="store_true", help="only print the verdict")
     args = ap.parse_args(argv)
@@ -286,19 +356,23 @@ def main(argv: list[str] | None = None) -> int:
     gate = measure_write_gate()
     residual = measure_revoke_residual()
     tamper = measure_tamper_detectability()
+    experience = measure_experience_gating()
 
     checks = {
         "write_gate_precision": gate["precision"] >= THRESHOLDS["write_gate_precision"],
         "revoke_residual_rate": residual["residual_rate"] <= THRESHOLDS["revoke_residual_rate"],
         "tamper_detect_rate": tamper["detect_rate"] >= THRESHOLDS["tamper_detect_rate"],
+        "experience_pass_rate": (experience["pass_rate"]
+                                 >= THRESHOLDS["experience_pass_rate"]),
     }
     report = {
         "ok": all(checks.values()),
         "thresholds": THRESHOLDS,
         "checks": checks,
-        "metrics": {"write_gate": gate, "revoke": residual, "tamper": tamper},
+        "metrics": {"write_gate": gate, "revoke": residual, "tamper": tamper,
+                    "experience": experience},
         "note": "local, offline, zero-dependency; measures admission/revocation/"
-                "auditability rather than recall.",
+                "auditability/experience scoring rather than recall.",
     }
     if args.json:
         Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=2),
@@ -309,7 +383,8 @@ def main(argv: list[str] | None = None) -> int:
         verdict = "ok" if report["ok"] else "FAILED"
         print(f"eval_memory: {verdict} "
               f"(gate {gate['precision']:.3f}, residual {residual['residual_rate']:.3f}, "
-              f"tamper {tamper['detect_rate']:.3f})")
+              f"tamper {tamper['detect_rate']:.3f}, "
+              f"experience {experience['pass_rate']:.3f})")
     return 0 if report["ok"] else 1
 
 

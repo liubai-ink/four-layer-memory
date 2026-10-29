@@ -8,9 +8,9 @@
 
 **Author**: liubai — project **liu bai**.
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
-**Version**: 0.7.7.
+**Version**: 0.7.8.
 
-> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.7 is the current source release; it is the version the v0.4 review response refers to.
+> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.8 is the current source release; it is the version the v0.4 review response refers to.
 
 ## Download and use in five minutes
 
@@ -75,6 +75,19 @@ Then pick how your agent talks to it:
   `store.authority_mix()` reports how much of the store is the agent's own
   inference — `audit` fails once that share passes 15%. These are numbers, not
   promises: "a rewrite is lossy" is measured, not asserted.
+- **Bundles are untrusted by default.** `init --from-bundle` replays the exported
+  ledger but does **not** re-mint the exporter's approvals: a claim that needs a
+  host approval is parked in quarantine and listed under `needs_review`, so a
+  stolen bundle cannot widen layer A on the host that imports it.
+  `--trust-bundle` (library: `import_bundle(..., trust=True)`) is the explicit
+  opt-in, and `audit` keeps the import record.
+- **Experience can be scored after use.** An experience that worked gets copied
+  next time — so does one that failed. `Entry(kind="experience")` marks a stored
+  habit or procedure, `record_outcome([id], ok=False)` appends a verdict to the
+  ledger, and `read_layers()` / `search()` stop serving an experience whose latest
+  verdict failed (`--include-failed` for audits). Facts cannot be scored: they are
+  decided at the write path. `audit` reports unlabelled experience as debt
+  (target 50%), not as an error.
 - **CLI**: for poking at a store by hand; `approve` lives here because it is a
   host decision, not a model decision.
 

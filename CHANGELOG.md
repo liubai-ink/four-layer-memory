@@ -2,6 +2,91 @@
 
 # Changelog
 
+## 0.7.8 - 2026-10-30
+
+### Experience can be scored after use (R052)
+
+An experience that worked gets copied the next time a similar task arrives; so
+does one that failed. `Entry(kind="experience")` separates a stored habit from a
+fact, `record_outcome(entry_ids, ok=...)` appends a verdict to the ledger without
+rewriting the claim, and `search` / `read_layers` stop serving an experience whose
+latest verdict is `failed` (`--include-failed` / `include_failed=True` keeps it
+auditable). `status()["experience"]` and the `experience` audit check report how
+much experience is still unlabelled (target 50%) as debt, not as an error. Facts
+cannot be scored at all: they are decided at the write path, never by how
+convenient they turned out to be.
+
+### A bundle is untrusted by default (R051)
+
+`init --from-bundle` replays the exported ledger but no longer re-mints the
+exporter's approvals: a claim that needs a host approval is parked in quarantine
+and listed under `needs_review`. `--trust-bundle` (library:
+`import_bundle(..., trust=True)`) is the explicit opt-in for a bundle whose
+provenance the importing host already vouches for. This closes the bulk-write
+channel a stolen bundle used to open on every host that imported it.
+
+### Review round: migration, approval, and the review queue
+
+Two adversarial reviews of this release found that the new verdicts were not
+carried everywhere they needed to be. Fixed before release:
+
+- **Bundles replay verdicts.** `import_bundle` used to replay only
+  `write`/`approve`/`revoke`, so a failed experience came back to life after a
+  migration. `outcome` events are now replayed in ledger order and reported as
+  `outcomes_replayed`.
+- **The review queue travels with the bundle.** Claims that were pending at
+  export time are re-parked on import and listed in `needs_review`, so
+  `docs/PORTABILITY.md` no longer over-promises. A claim whose `supersedes`
+  target is absent on the importing host is parked for review instead of being
+  dropped into `failures`.
+- **Import counts effects, not records.** A quarantined write also appends a
+  `quarantine` ledger event; counting ledger growth therefore reported denied
+  writes as imports. Counts now compare committed ids before and after each
+  replay step, and `force=True` re-imports no longer claim fresh imports.
+- **`approve()` no longer launders provenance.** Verification now runs before
+  the idempotent branch, the rebuilt entry keeps the candidate's own
+  `authority`/`evidence` for non-A layers (A keeps the strict
+  user-explicit/quote rule), the candidate's tags are merged rather than
+  replaced, and `_repair_approval` refuses revoked or compacted entries.
+- **One verdict channel.** `Entry.outcome` is gone; the ledger's `outcome`
+  events are the only record, so `search` and `read_layers` can no longer
+  disagree about a claim. `read_layers(..., include_failed=True)` makes a failed
+  experience's text auditable without serving it.
+- **R053 reaches the readers.** `state_add` enumerates live states through
+  `read_layers(scope="state")`, writes at `user-implied`/`paraphrase`, no longer
+  fabricates an approval, and retries without `--supersedes` when the previous
+  target is missing. `bootstrap.py` filters superseded states, so a new state
+  actually replaces the old one in the prompt.
+- **MCP exposes R052.** `memory_add` accepts `kind`, `memory_recall` accepts
+  `include_failed`, `memory_load` reports `failed`/`superseded`, and the new
+  `memory_record_outcome` tool scores entries the same way the CLI does.
+- **Smaller repairs:** `experience_stats` counts only currently served
+  experience; a failed verdict no longer keeps the claim it superseded hidden;
+  `record_outcome` deduplicates ids and refuse entries whose writing transaction
+  was never bound; `audit` reports `STORE_FORMAT` instead of a missing
+  `MemoryStore.VERSION`; the CLI turns `StoreError` into `error: ...` with exit
+  code 2 and search grows `--include-revoked` / `--include-expired`;
+  `eval_memory` gains bundle round-trip and review-queue cases and loses its
+  duplicated description/`metrics` key; `pyproject`, `__init__`, `mcp` and the
+  README all report 0.7.8.
+
+### Solved
+
+- `approve()` rebuilt an entry from its quarantine record and dropped
+  `supersedes`, `valid_from`, `valid_to` and `kind`, so every claim that reached
+  a layer through quarantine -> approve lost its merge link and validity window.
+  (Found while wiring R053; regression test in `tests/test_supersede.py`.)
+- State writes supersede the previous state at write time (R053): a short-lived
+  state is replaced the moment the next one is written instead of waiting for
+  its TTL, so "I moved" cannot leave the old claim in service.
+- `record_outcome` raises `StoreError` for facts instead of scoring them.
+- Bundles are written as ASCII-clean JSON (unicode escapes). The provenance note
+  carries 留白 and an em dash; stored as raw UTF-8 it made `Path.read_text()` on
+  a cp936 Windows host raise `UnicodeDecodeError` before any verification could
+  run. Regression test: `test_bundle_stays_ascii_clean`.
+- `docs/THREAT-MODEL.md` gains T13 (bundle as a bulk write channel), T14 (a
+  failed experience being copied) and the R051 channel map.
+
 ## 0.7.7 - 2026-10-29
 
 ### A rewrite is lossy: measure it, and demand an anchor

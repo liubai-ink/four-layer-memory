@@ -89,6 +89,44 @@ class SupersedeCase(unittest.TestCase):
         self.assertEqual(report["checks"]["supersede"]["chains"], 1)
         self.assertEqual(report["checks"]["supersede"]["findings"], [])
 
+    # -- the quarantine -> approve path keeps the claim's metadata ---------
+    def test_approval_channel_keeps_supersedes_and_window(self) -> None:
+        """The ledger is append-only: whatever the approve rebuild drops is lost.
+
+        A claim that arrives through quarantine (admission rejected it on the
+        write side) and is then approved by the host must keep its supersedes
+        link and validity window; otherwise the old claim stays in service.
+        """
+        import contextlib
+        import io
+
+        from four_layer_memory import cli
+
+        from . import helpers
+
+        old = helpers.add_a(self.store, "I live in the dorm.", source="m:1",
+                            source_event_id="evt-1")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(["--root", str(self.root), "add", "A", "I moved home.",
+                             "--source", "m:2", "--authority", "user-explicit",
+                             "--evidence", "quote", "--source-event", "evt-2",
+                             "--supersedes", old.entry_id,
+                             "--valid-from", "2026-01-01", "--valid-to", "2099-01-01",
+                             "--approved"])
+        self.assertEqual(0, code, buf.getvalue())
+
+        served = self.store.read_layers(["A"])
+        self.assertIn("moved home", served["text"])
+        self.assertNotIn("live in the dorm", served["text"])
+        self.assertEqual([old.entry_id], served["superseded"])
+        record = served["blocks"][0]["record"]
+        self.assertEqual(old.entry_id, record["supersedes"])
+        self.assertEqual("2099-01-01", record["valid_to"])
+
+        raw = (self.root / "conventions.md").read_text(encoding="utf-8")
+        self.assertIn(f"`supersedes: {old.entry_id}`", raw)
+
     # -- NOOP is a recorded decision, not a write --------------------------
     def test_noop_goes_to_ledger_only(self) -> None:
         before = self.store.read_layers(["B", "C", "D"])["text"]

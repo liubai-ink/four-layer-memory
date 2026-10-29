@@ -30,6 +30,29 @@ risk we are not claiming to remove, and the test that exercises the control.
 | T11 | an agent forges an approval, replays an old one, or mints one for a different entry | layer A | approvals are host-signed records (`approval.py`: HMAC over entry id, text digest, source event, scope `layer:A`, format version); MCP exposes no approval, `MemoryStore.review(accept=True)` raises, and `approve()` re-runs `admission.decide(approved=True)` plus the revocation check | a compromised host that reads `approval.key` is outside the boundary | `test_r01_tool_results_never_approve`, `test_r01_library_cannot_accept`, `test_r02_approval_is_content_and_event_bound`, `test_r04_approval_after_revoke_refused` |
 | T12 | a crash between "ledger written" and "layer file written" leaves the store inconsistent | memory files, ledger | typed write-ahead transactions: the `write` record carries the transaction id and the expected layer bytes, the file is replaced atomically, then `bind` hashes the bytes on disk; `recover()` on open materialises or re-binds an unbound transaction, a retried write repairs a partial commit, and a foreign change is refused by `_guard_bytes` | physical power loss, loss of the page cache, multi-writer interleaving and compaction are out of scope and listed as non-claims | `test_r08_crash_after_ledger_is_repaired`, `test_r09_retry_repairs_missing_bind`, `test_r10_hand_edit_is_not_absorbed` |
 
+| T13 | a bundle imported into a fresh host carries approval material that would mint layer-A claims there | layer A, ledger | `import_bundle(..., trust=False)` replays the ledger but does not re-mint approvals; claims needing a host approval are parked in quarantine and listed in `needs_review`; `trust=True` is the explicit, recorded opt-in | a host that opts into `--trust-bundle` accepts the exporter's word for layer A | `test_untrusted_bundle_parks_layer_a_in_quarantine` |
+| T14 | an agent copies a stored experience that failed when it was used, amplifying the error | layer C/D experience entries | `Entry.kind="experience"` plus ledger `outcome` events (`record_outcome`); `search`/`read_layers` stop serving `failed` experience (`--include-failed` for audits); facts cannot be scored; unlabelled experience is reported as debt by `audit` | experience that was never scored stays in service; the debt is visible, not blocked | `tests/test_experience.py` |
+
+## Write channels, and what each one is allowed to do (R051)
+
+A memory store is attacked through its *write* channels, not its reads. The four
+channels this deployment has, and the control each one passes through:
+
+| channel | what can arrive | control | residual risk |
+| ------- | --------------- | ------- | ------------- |
+| the user's own messages | claims, preferences, states | admission (`user-explicit` + `quote` + source event + host approval for A); B needs quote/paraphrase | a paraphrase is still a human judgement |
+| tool output and retrieved documents | bulk, untrusted text | admission rejects or quarantines; `authority=observed/inferred` cannot enter A/B | a long document can carry a plausible paraphrase |
+| importing a bundle | a whole ledger at once | `import_bundle(trust=False)`: no re-minted approvals, `needs_review` (T13) | `--trust-bundle` is a host decision |
+| the agent writing about itself | inferences, habits, procedures | agent text cannot be `user-explicit`; experience entries are scored after use (T14) | inference that was never used stays unlabelled |
+
+The paper behind this map (arXiv:2606.04329) reports four memory-write channels,
+nine structural weaknesses and six attack classes, and shows that a single
+adversarial write can steer behaviour long after it enters; it also finds that
+more write-happy and more retrieval-happy agents are easier to poison. The bullet
+list of its nine weaknesses is not transcribed here -- we only claim the mapping
+above, which is what our code actually enforces.
+
+
 ## What the model deliberately does not claim
 
 - It does not authenticate the *user*. `authority=user-explicit` means "this

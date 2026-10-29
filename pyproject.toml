@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "four-layer-memory"
-version = "0.7.7"
+version = "0.7.8"
 description = "Four-layer memory for long-horizon LLM agents: conventions, preferences, capabilities, background."
 readme = "README.md"
 requires-python = ">=3.10"

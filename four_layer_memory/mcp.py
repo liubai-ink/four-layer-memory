@@ -50,7 +50,7 @@ from .watermark import WATERMARK
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "four-layer-memory"
-SERVER_VERSION = "0.7.7"
+SERVER_VERSION = "0.7.8"
 
 
 def _root() -> Path:
@@ -84,6 +84,11 @@ def tool_load(args: dict) -> dict:
         "revoked": loaded["revoked"],
         "revoked_sources": loaded["revoked_sources"],
         "expired": loaded["expired"],
+        # R052: a claim the caller may not use, and a claim replaced by a newer
+        # one, are both reported -- silently omitting them would look like the
+        # store never had them.
+        "failed": loaded.get("failed", []),
+        "superseded": loaded.get("superseded", []),
         # F06: unknown material is reported as a count on the diagnostics
         # channel, never as text in a successful tool result.
         "unknown": loaded.get("unknown", {}),
@@ -105,6 +110,7 @@ def tool_add(args: dict) -> dict:
         source_event_id=str(args.get("source_event_id", "")),
         scope=str(args.get("scope", "") or ""),
         expires_at=str(args.get("expires_at", "") or ""),
+        kind=str(args.get("kind", "fact") or "fact"),
         approved=False,  # approval is never granted by the writer
     )
     store = _store()
@@ -125,6 +131,7 @@ def tool_add(args: dict) -> dict:
         "scope": getattr(added, "scope", ""),
         "expires_at": getattr(added, "expires_at", ""),
         "lifecycle": getattr(added, "lifecycle", ""),
+        "kind": getattr(added, "kind", "fact"),
         "watermark": WATERMARK,
     }
 
@@ -177,10 +184,26 @@ def tool_recall(args: dict) -> dict:
         str(args.get("query", "")),
         layer=(args.get("layer") or None),
         include_revoked=bool(args.get("include_revoked", False)),
+        include_failed=bool(args.get("include_failed", False)),
         limit=int(args.get("limit", 10)),
     )
     return {"query": args.get("query", ""), "count": len(hits),
             "entries": hits, "watermark": WATERMARK}
+
+
+def tool_record_outcome(args: dict) -> dict:
+    """Score an experience entry by how it actually performed (R052)."""
+    raw_ids = args.get("entry_ids") or args.get("entry_id") or []
+    if isinstance(raw_ids, str):
+        raw_ids = [x for x in raw_ids.split(",") if x.strip()]
+    ids = [str(x).strip() for x in raw_ids if str(x).strip()]
+    if not ids:
+        raise StoreError("memory_record_outcome needs at least one entry id")
+    ok = bool(args.get("ok", not bool(args.get("failed", False))))
+    report = _store().record_outcome(ids, ok=ok,
+                                     reason=str(args.get("reason", "") or ""))
+    report["watermark"] = WATERMARK
+    return report
 
 
 def tool_archive_search(args: dict) -> dict:
@@ -240,6 +263,7 @@ TOOLS = [
                 "source_event_id": {"type": "string"},
                 "scope": {"type": "string", "description": "optional scope label; lifecycle enforcement is host-side"},
                 "expires_at": {"type": "string", "description": "optional ISO date; expired entries are not loaded"},
+                "kind": {"type": "string", "enum": ["fact", "experience"], "description": "experience entries can be scored later with memory_record_outcome; facts cannot"},
             },
         },
     },
@@ -266,6 +290,20 @@ TOOLS = [
             "type": "object",
             "required": ["entry_id"],
             "properties": {"entry_id": {"type": "string"}, "accept": {"type": "boolean", "description": "must be false; acceptance is a host action"}},
+        },
+    },
+    {
+        "name": "memory_record_outcome",
+        "description": "Score experience entries by how they performed. A failed experience is no longer served (R052): following it is how one bad decision spreads. Facts cannot be scored -- they are decided at the write path.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["entry_ids"],
+            "properties": {
+                "entry_ids": {"type": "array", "items": {"type": "string"}},
+                "ok": {"type": "boolean"},
+                "failed": {"type": "boolean", "description": "convenience alias for ok=false"},
+                "reason": {"type": "string"},
+            },
         },
     },
     {
@@ -305,6 +343,7 @@ TOOLS = [
                 "layer": {"type": "string", "enum": ["A", "B", "C", "D"]},
                 "limit": {"type": "integer"},
                 "include_revoked": {"type": "boolean", "description": "also return entries retracted by a revoke event"},
+                "include_failed": {"type": "boolean", "description": "audit only: also return experience entries judged failed"},
             },
         },
     },
@@ -322,6 +361,7 @@ HANDLERS = {
     "memory_archive_search": tool_archive_search,
     "memory_archive_verify": tool_archive_verify,
     "memory_recall": tool_recall,
+    "memory_record_outcome": tool_record_outcome,
 }
 
 
