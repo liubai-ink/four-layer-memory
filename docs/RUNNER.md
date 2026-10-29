@@ -112,9 +112,18 @@ Before the host folds context:
 3. **Persona first.** Names, promises, relationship details, and tone rules must
    already be in the store (A/B) *before* they are folded — a summary must never be
    the only place they exist.
-4. **Keep the user's lines verbatim.** A fold that loses the user's exact words
-   loses the ability to cite them later.
-5. **Four-section template.** Every fold produces, at minimum:
+4. **Keep the user's lines verbatim — by score, not first-come.** Retention is
+   `authority × unrecorded × recency`: a persona or convention line the user said
+   and that is not in the store yet (P0) must be stored verbatim before the fold;
+   an older, already-recorded paraphrase can go. Ordering by arrival time or
+   character cap is exactly how the important line becomes the one that is dropped.
+5. **A rewrite without an anchor is a lost original.** Every summary/paraphrase
+   the fold produces needs a `source_event_id` (or a `supersedes` link) to the
+   entry it replaces; `add` warns otherwise and `FLM_REQUIRE_ANCHOR=1` refuses.
+   After folding, `store.provenance_coverage()` should stay above 0.90 and
+   `store.authority_mix()["derived_share"]` below 0.15 — the store auditing
+   itself instead of the host trusting its own summary.
+6. **Four-section template.** Every fold produces, at minimum:
 
 ```
 U: m00042 14:25 [sha8] «the user's verbatim line»
@@ -124,7 +133,7 @@ State: where the task stands, what remains
 Open: one line per unfinished objective
 ```
 
-6. **Re-read before replying.** After folding, re-read the last real user messages
+7. **Re-read before replying.** After folding, re-read the last real user messages
    (§1.7). Do not answer from the summary.
 
 ---

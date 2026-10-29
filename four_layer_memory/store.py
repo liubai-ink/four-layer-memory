@@ -523,7 +523,62 @@ class MemoryStore:
             "expired": sum(1 for e in self._servable(records) if self._is_expired(e)),
             "signing": self.signing_info(),
             "approval_fingerprint": approval.fingerprint(self.root),
+            "authority_mix": self.authority_mix(records),
+            "provenance": self.provenance_coverage(records),
             "watermark": WATERMARK,
+        }
+
+    def authority_mix(self, records: list[dict] | None = None,
+                      layers: tuple[str, ...] | None = None) -> dict:
+        """Which authorities the *served* entries rest on (v0.7.7).
+
+        ``observed`` and ``inferred`` entries are derived by the agent, not told
+        by the user: a store drifting towards them is quoting itself.  The share
+        is reported here and judged by the audit; it is not a write rule.
+
+        ``layers`` narrows the count to the layers that feed the prompt's claims
+        (the audit judges A/B/C and leaves D's background notes out).
+        """
+        from collections import Counter
+
+        served = self._servable(records)
+        if layers:
+            served = [e for e in served if e.layer in layers]
+        authority = Counter((e.authority or "none") for e in served)
+        evidence = Counter((e.evidence or "none") for e in served)
+        total = sum(authority.values())
+        derived = authority.get("inferred", 0) + authority.get("model-generated", 0)
+        return {
+            "total": total,
+            "layers": sorted(layers) if layers else "all",
+            "authority": dict(sorted(authority.items())),
+            "evidence": dict(sorted(evidence.items())),
+            "derived": derived,
+            "derived_share": round(derived / total, 4) if total else 0.0,
+        }
+
+    def provenance_coverage(self, records: list[dict] | None = None) -> dict:
+        """How many *rewritten* entries can still be traced to their source (v0.7.7).
+
+        A ``quote`` carries the original words; a ``summary`` or ``paraphrase``
+        is the agent's rewrite of them.  Without ``source_event_id`` (or a
+        ``supersedes`` link) there is no way back, so the rewrite has silently
+        replaced the evidence -- the "rewrite is lossy" failure this store exists
+        to prevent.
+        """
+        served = self._servable(records)
+        rewrites = [e for e in served if e.evidence in ("summary", "paraphrase", "inference")]
+        unanchored = [e for e in rewrites if not (e.source_event_id or e.supersedes)]
+        anchored = len(rewrites) - len(unanchored)
+        quotes = [e for e in served if e.evidence == "quote"]
+        return {
+            "rewrites": len(rewrites),
+            "anchored": anchored,
+            "coverage": round(anchored / len(rewrites), 4) if rewrites else 1.0,
+            "unanchored": len(unanchored),
+            "unanchored_sample": [e.entry_id for e in unanchored][:10],
+            "quotes": len(quotes),
+            "quotes_anchored": sum(1 for e in quotes if e.source_event_id),
         }
 
     # -- layer files --------------------------------------------------------

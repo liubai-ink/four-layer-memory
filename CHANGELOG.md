@@ -2,7 +2,40 @@
 
 # Changelog
 
-## Unreleased
+## 0.7.7 - 2026-10-29
+
+### A rewrite is lossy: measure it, and demand an anchor
+
+The failure this store exists to prevent is not a missing feature, it is a
+paraphrase that quietly *replaces* the words it summarizes: once the original is
+gone, nobody can check the summary against it, and the summary becomes the
+evidence. Two measured numbers now make that visible, and one guard stops it at
+the write gate.
+
+- `MemoryStore.provenance_coverage()` — of the served `summary`/`paraphrase`
+  entries, how many still point back at their source via `source_event_id` or
+  `supersedes`. Returns `rewrites`, `anchored`, `coverage`, `unanchored`,
+  `unanchored_sample`, and the same for `quote` entries.
+- `MemoryStore.authority_mix()` — the authority and evidence mix of the served
+  entries, with `derived_share` = (inferred + model-generated) / total. A store
+  whose served claims are mostly the agent's own inferences is quoting itself.
+- `four-layer-memory add` warns when a `summary`/`paraphrase`/`inference` arrives
+  with neither `--source-event-id` nor `--supersedes`; `FLM_REQUIRE_ANCHOR=1`
+  turns the warning into a refusal (exit 2). This is where "改写即失真" is
+  enforced, while the original words are still reachable.
+- `audit` gained `authority` (fails when `derived_share` > 0.15, code
+  `derived_share_high`) and `provenance` (reports `coverage` against a 0.90
+  target as `meets_target`; legacy unanchored rewrites are reported as debt, not
+  as a build failure, because the guard only applies to new writes).
+- `store.status()` now carries `authority_mix` and `provenance`.
+
+### Retention is a score, not first-come
+
+`docs/RUNNER.md` §4: a fold keeps lines by `authority × unrecorded × recency`. A
+persona or convention line the user actually said, not yet in the store, is P0
+and must be stored verbatim *before* the fold; an older already-recorded
+paraphrase can go. Ordering by arrival time or character cap is how the important
+line becomes the one that is dropped.
 
 ### Docs: `docs/RUNNER.md`, the host's half of the contract
 

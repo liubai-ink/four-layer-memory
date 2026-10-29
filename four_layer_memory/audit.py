@@ -34,6 +34,13 @@ SECRET = re.compile(r"sk-[A-Za-z0-9_-]{16,}")
 USERPATH = re.compile("[A-Za-z]:" + chr(92) + chr(92) + "Users" + chr(92) + chr(92) + "|/home/[^/]+/")
 SENSITIVE = admission.SENSITIVE_PATTERNS
 
+# v0.7.7: a store that starts quoting itself, or silently rewriting its evidence,
+# still passes every structural check.  These two numbers make that visible.
+INFERRED_SHARE_MAX = 0.15   # derived (inferred + model-generated) share of served entries
+INFERRED_SHARE_MIN_ENTRIES = 20  # below this a share is noise, not a signal
+JUDGED_LAYERS = ("A", "B", "C")  # D is a chronicle of facts, not a claim source
+PROVENANCE_TARGET = 0.90    # rewrites (summary/paraphrase) that must point back at a source
+
 
 def _scan(text: str, label: str) -> list[dict]:
     findings: list[dict] = []
@@ -144,6 +151,37 @@ def audit_store(root: str | Path) -> dict:
         problems.extend(f"supersede: {f['code']} {f.get('entry_id')}"
                         for f in supersede["findings"])
     checks["supersede"] = supersede
+
+    # -- authority / provenance (a rewrite is lossy) ------------------------
+    mix = store.authority_mix(_records)
+    claims = store.authority_mix(_records, layers=JUDGED_LAYERS)
+    authority: dict = {"ok": True, "findings": [], "min_entries": INFERRED_SHARE_MIN_ENTRIES,
+                       "judged_layers": list(JUDGED_LAYERS), **mix}
+    # On a handful of entries the share is noise (a two-entry store of inferences
+    # says nothing about drift), so the threshold only applies once the sample is
+    # big enough to mean something.  Layer D's background notes are left out: it
+    # is a chronicle of facts, A/B/C are the claims the prompt actually relies on.
+    authority["judged"] = claims["total"] >= INFERRED_SHARE_MIN_ENTRIES
+    authority["claims"] = {"total": claims["total"], "derived": claims["derived"],
+                           "derived_share": claims["derived_share"]}
+    if authority["judged"] and claims["derived_share"] > INFERRED_SHARE_MAX:
+        authority["findings"].append({"code": "derived_share_high",
+                                      "derived": claims["derived"],
+                                      "total": claims["total"],
+                                      "share": claims["derived_share"],
+                                      "limit": INFERRED_SHARE_MAX})
+        authority["ok"] = False
+        problems.append(f"authority: derived_share_high "
+                        f"{claims['derived']}/{claims['total']}")
+    checks["authority"] = authority
+
+    coverage = store.provenance_coverage(_records)
+    provenance: dict = {"ok": True, "findings": [], "target": PROVENANCE_TARGET,
+                        **coverage}
+    provenance["meets_target"] = coverage["coverage"] >= PROVENANCE_TARGET
+    # Legacy rewrites predate the anchor requirement, so this is reported as
+    # debt rather than failed; new writes are guarded at cmd_add (FLM_REQUIRE_ANCHOR).
+    checks["provenance"] = provenance
 
     # -- content -----------------------------------------------------------
     content: dict = {"ok": True, "findings": []}

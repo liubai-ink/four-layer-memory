@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -107,6 +108,16 @@ def cmd_add(args) -> int:
         report = store.record_noop(entry, reason=getattr(args, "reason", "") or "")
         print(json.dumps(report, ensure_ascii=False))
         return 0
+    if entry.evidence in ("summary", "paraphrase", "inference") \
+            and not (entry.source_event_id or entry.supersedes):
+        # v0.7.7: a rewrite is lossy -- without an anchor the original words can
+        # no longer be found, and the rewrite silently becomes the evidence.
+        note = ("rewrite without an anchor: pass --source-event-id (or --supersedes) "
+                "so the original can still be recovered")
+        if os.environ.get("FLM_REQUIRE_ANCHOR") == "1":
+            print("error: " + note, file=sys.stderr)
+            return 2
+        print("warning: " + note, file=sys.stderr)
     e = store.add(entry)
     pending = [x for x in store.quarantine_entries() if x.get("entry_id") == e.entry_id]
     accepted = not pending

@@ -8,9 +8,9 @@
 
 **Author**: liubai — project **liu bai**.
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
-**Version**: 0.7.6.
+**Version**: 0.7.7.
 
-> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.6 is the current source release; it is the version the v0.4 review response refers to.
+> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.7 is the current source release; it is the version the v0.4 review response refers to.
 
 ## Download and use in five minutes
 
@@ -67,6 +67,14 @@ Then pick how your agent talks to it:
   `search --hybrid`) ranks by BM25 over tokens — Latin words plus CJK single
   characters and bigrams — so `架构记忆` finds `记忆架构`. The default stays an exact
   substring match: predictable, and zero dependencies either way.
+- **A rewrite must stay traceable.** A `summary` or `paraphrase` with no
+  `source_event_id` (and no `supersedes` link) has replaced the words it
+  summarizes: the original can no longer be found. `add` warns, and
+  `FLM_REQUIRE_ANCHOR=1` refuses the write. `store.provenance_coverage()` reports
+  how many rewrites still point back at their source and
+  `store.authority_mix()` reports how much of the store is the agent's own
+  inference — `audit` fails once that share passes 15%. These are numbers, not
+  promises: "a rewrite is lossy" is measured, not asserted.
 - **CLI**: for poking at a store by hand; `approve` lives here because it is a
   host decision, not a model decision.
 
