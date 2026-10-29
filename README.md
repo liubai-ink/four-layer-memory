@@ -1,4 +1,4 @@
-# Four-Layer Agent Memory · liu bai (留白)
+# Four-Layer Agent Memory · liu bai
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23638826.svg)](https://doi.org/10.5281/zenodo.23638826)
 
@@ -6,7 +6,7 @@
 > keeps the working memory small and the memory that *matters* on disk, split
 > into four layers that different mechanics keep alive.
 
-**Author**: liubai — project **liu bai** (留白).
+**Author**: liubai — project **liu bai**.
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
 **Version**: 0.7.6.
 
