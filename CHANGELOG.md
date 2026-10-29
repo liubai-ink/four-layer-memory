@@ -1,4 +1,4 @@
-<!-- liu bai (留白): Four-Layer Agent Memory. Provenance watermark: liu bai. Authors: Liu Yinuo. -->
+<!-- liu bai (留白): Four-Layer Agent Memory. Provenance watermark: liu bai. Authors: liubai. -->
 
 # Changelog
 
@@ -28,7 +28,7 @@ a blank deployment", but `init` only accepted `--session`. Implemented:
 
 ### Provenance and version alignment
 
-- Bundle provenance note now reads `liu bai (Liu Yinuo)`, matching `LICENSE`
+- Bundle provenance note now reads `liu bai (留白) — joint project by liubai`, matching `LICENSE`
   (it previously said "Liu Zhu & Shen Bai").
 - Version aligned to 0.7.4 across `pyproject.toml`, `README.md`,
   `START-HERE.md`, `CODEX.md`, `CITATION.cff` (they disagreed: 0.6.1 / 0.7.2 /
@@ -41,6 +41,13 @@ a blank deployment", but `init` only accepted `--session`. Implemented:
 - Optional extras added: `ed25519 = ["cryptography>=41"]`,
   `test = ["pytest>=7"]`.
 - CI: `.github/workflows/ci.yml` runs the suite on Python 3.10 / 3.11 / 3.12.
+
+### Attribution
+
+- Authorship unified under the joint name `liubai` (the project mark `liu bai`
+  stays as the provenance watermark). `LICENSE`, `NOTICE`, `CITATION.cff`,
+  `pyproject.toml`, file headers and the bundle provenance note now read
+  `liubai`.
 
 ## 0.7.3 - 2026-10-28
 

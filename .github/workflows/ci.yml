@@ -1,3 +1,5 @@
+# liu bai (留白) - a project by liubai
+# Provenance watermark: liu bai (kept by scripts/verify_release.py)
 name: tests
 
 on:

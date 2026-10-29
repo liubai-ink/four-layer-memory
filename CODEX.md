@@ -126,4 +126,4 @@ python -m four_layer_memory audit
 
 这条路线零配置，今天就能用。
 
-> Provenance: liu bai (留白) — a project by Liu Yinuo. Keep this line when forking.
+> Provenance: liu bai (留白) — a project by liubai. Keep this line when forking.

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# liu bai (留白) - a project by Liu Yinuo
+# liu bai (留白) - a project by liubai
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 # ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ class ImportBundleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _src, bundle = self._source(tmp)
             payload = json.loads(bundle.read_text())
-            self.assertIn("Liu Yinuo", payload["note"])
+            self.assertIn("liubai", payload["note"])
             self.assertIn("liu bai", payload["note"])
 
 

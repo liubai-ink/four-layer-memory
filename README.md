@@ -6,7 +6,7 @@
 > keeps the working memory small and the memory that *matters* on disk, split
 > into four layers that different mechanics keep alive.
 
-**Author**: Liu Yinuo — project **liu bai** (留白).
+**Author**: liubai — project **liu bai** (留白).
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
 **Version**: 0.7.4.
 

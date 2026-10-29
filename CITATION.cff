@@ -1,4 +1,4 @@
-﻿# liu bai (留白) - a project by Liu Yinuo
+﻿# liu bai (留白) - a project by liubai
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 cff-version: 1.2.0
@@ -10,8 +10,7 @@ abstract: >-
   long-horizon language agents, with provenance-bound admission, watermark-driven
   consolidation, snapshot-cursor handoff, and a signed audit ledger.
 authors:
-  - family-names: "Liu"
-    given-names: "Yinuo"
+  - name: "liubai"
 version: 0.7.4
 date-released: "2026-10-25"
 license: MIT

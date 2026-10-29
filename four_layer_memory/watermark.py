@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# liu bai (留白) - a project by Liu Yinuo
+# liu bai (留白) - a project by liubai
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 # ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ WATERMARK = "liu bai"
 HEADER = (
     "# ---------------------------------------------------------------------------\n"
     "# liu bai (留白) - Four-Layer Agent Memory\n"
-    "# Authors: Liu Yinuo\n"
+    "# Authors: liubai\n"
     "# Provenance watermark: liu bai\n"
     "# ---------------------------------------------------------------------------\n"
 )

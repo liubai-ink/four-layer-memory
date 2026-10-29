@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# liu bai (留白) - a project by Liu Yinuo
+# liu bai (留白) - a project by liubai
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
 # ---------------------------------------------------------------------------
@@ -1663,7 +1663,7 @@ class MemoryStore:
         out = Path(out)
         payload = {
             "watermark": WATERMARK,
-            "note": "Provenance: liu bai (Liu Yinuo). Keep this field when redistributing.",
+            "note": "Provenance: liu bai (留白) — joint project by liubai. Keep this field when redistributing.",
             "store_version": STORE_FORMAT,
             "state": json.loads(self.state.to_json()),
             "layers": {},

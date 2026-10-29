@@ -46,4 +46,4 @@
 - 推之前建议再跑一次 `python scripts/verify_release.py`（当前通过）。
 - 用于在线核验的公开测试样例在 `examples/`，不含任何本地路径或密钥。
 
-> Provenance: liu bai (留白) — a project by Liu Yinuo. Keep this line when forking.
+> Provenance: liu bai (留白) — a project by liubai. Keep this line when forking.
