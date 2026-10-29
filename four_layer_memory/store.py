@@ -1,4 +1,4 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # liu bai (留白) - a project by Liu Yinuo
 # Four-Layer Agent Memory: conventions, preferences, capabilities, background.
 # Provenance watermark: liu-bai/four-layer-memory. Keep this header when forking.
@@ -1160,6 +1160,37 @@ class MemoryStore:
                           "approver": approver, "declared_token_ignored": bool(token)})
             self._save_state()
         return {"entry_id": entry_id, "decision": "reject", "layer": match[0].get("layer", "")}
+
+    def resolve_quarantine(self, entry_id: str, decision: str = "accepted",
+                           approver: str = "host") -> dict:
+        """Close a quarantine trail record once the host channel accepted the claim.
+
+        The claim still enters its layer through :meth:`approve`; this only keeps
+        the quarantine trail honest.  Without it every *successful*
+        ``add --approved`` leaves a phantom "waiting for the host channel" record
+        behind, because ``add`` necessarily files the claim in quarantine before
+        the host decides (v0.7: the write side never holds approval material).
+
+        Unlike :meth:`review` this is not a rejection: the decision is recorded as
+        ``decision=accepted`` and no approval material is stored here either.
+        """
+        with self._lock():
+            self._reload()
+            if not any(e["entry_id"] == entry_id
+                       for e in self.quarantine_entries(include_resolved=True)):
+                raise StoreError(f"no quarantined entry {entry_id}")
+            if entry_id in self._resolved_ids():
+                return {"entry_id": entry_id, "decision": decision, "skipped": True}
+            with self.resolved_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"entry_id": entry_id, "decision": decision,
+                                     "approver": approver, "ts": now_iso()},
+                                    ensure_ascii=False) + chr(10))
+                fh.flush()
+                os.fsync(fh.fileno())
+            self._ledger({"event": "resolve", "entry_id": entry_id,
+                          "decision": decision, "approver": approver})
+            self._save_state()
+        return {"entry_id": entry_id, "decision": decision, "skipped": False}
 
     def _repair_approval(self, rec: dict) -> None:
         """Complete a ledger-committed approval whose materialisation was cut short."""

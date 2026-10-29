@@ -16,4 +16,4 @@ store/
 quarantine/
 ledger.jsonl
 *.db
-*.sqlite
+*.sqlite*.bak-*

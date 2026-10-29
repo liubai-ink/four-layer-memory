@@ -83,6 +83,11 @@ def cmd_add(args) -> int:
         # --approved is the host exercising its own approval channel; the record
         # is minted and verified exactly like an interactive approval.
         _approve(store, e.entry_id, "cli")
+        # The claim was filed in quarantine on its way in (the write side never
+        # holds approval material), so close that trail now that the host channel
+        # accepted it -- otherwise every accepted add leaves a phantom "waiting
+        # for the host channel" record behind.
+        store.resolve_quarantine(e.entry_id, decision="accepted", approver="cli")
         accepted = True
         pending = []
     print(json.dumps({"added": e.text, "layer": e.layer, "quarantined": bool(pending),
