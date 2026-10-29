@@ -70,10 +70,12 @@ Then pick how your agent talks to it:
 - **CLI**: for poking at a store by hand; `approve` lives here because it is a
   host decision, not a model decision.
 
-The host still owns two decisions: *what goes into the prompt* (load A and B
-every turn; C on demand; D through the cursor) and *when to consolidate*.
-[prompts/LOADING.md](prompts/LOADING.md) is the written contract to paste into
-your agent's instructions.
+The host still owns two decisions: *what goes into the prompt* and *when to
+consolidate*. [docs/RUNNER.md](docs/RUNNER.md) is the written contract for the
+first one — the boot sequence, the citation rules, the fold guard, and the measured
+reason **not** to inject all of A and B on every turn.
+[prompts/LOADING.md](prompts/LOADING.md) is a shorter paste-ready variant for agent
+presets.
 
 ## Why four layers
 

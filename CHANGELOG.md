@@ -2,6 +2,19 @@
 
 # Changelog
 
+## Unreleased
+
+### Docs: `docs/RUNNER.md`, the host's half of the contract
+
+Founding README claimed the host should "load A and B every turn". Measured, that
+is ~1.3k tokens per turn on a small store and ~6x the cost of one boot read, and it
+turns always-on memory into background noise (the failure mode that makes a model
+answer its own summary). `docs/RUNNER.md` writes down what the host actually has to
+do: a boot sequence, four-bucket citation discipline, the write-approval rule, the
+fold guard with the four-section template, a minimal implementation checklist, and
+the four failure modes this contract exists to prevent. README's pointer now goes
+there first.
+
 ## 0.7.6 - 2026-10-29
 
 ### Write-side merge: a newer claim can replace an older one
