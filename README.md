@@ -12,26 +12,27 @@
 
 > **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.8 is the current source release; it is the version the v0.4 review response refers to.
 
-## Download and use in five minutes
+## Quickstart (three commands)
 
 ```bash
-git clone https://github.com/liubai-ink/four-layer-memory && cd four-layer-memory
-pip install -e .
+pip install -e git+https://github.com/liubai-ink/four-layer-memory#egg=four-layer-memory
 four-layer-memory --root ./memory init
-four-layer-memory --root ./memory add A "Always answer in Chinese." \
-    --source chat:1 --authority user-explicit --evidence quote --source-event evt-1
-four-layer-memory --root ./memory approve <entry_id>     # host action; see below
 four-layer-memory --root ./memory audit                  # {"ok": true, ...}
 ```
+
+To write and approve your first memory, see
+[docs/INTEGRATING.md](docs/INTEGRATING.md) §1. A write only becomes loadable
+after a host approval — that gate *is* the design.
 
 Then pick how your agent talks to it:
 
 - **MCP** (Claude Desktop, Cursor, any MCP client): run
   `four-layer-memory-mcp --root ./memory` and paste the JSON from
-  [docs/INTEGRATING.md](docs/INTEGRATING.md). The model gets eleven tools
+  [docs/INTEGRATING.md](docs/INTEGRATING.md). The model gets twelve tools
   (`memory_load`, `memory_add`, `memory_consolidate`, `memory_status`,
   `memory_audit`, `memory_quarantine`, `memory_review`, `memory_handoff`,
-  `memory_recall`, `memory_archive_search`, `memory_archive_verify`) and needs
+  `memory_recall`, `memory_archive_search`, `memory_archive_verify`,
+  `memory_record_outcome`) and needs
   no code changes on the host side. None of those tools can approve a write.
 - **Every write leaves an archive.** The store keeps an append-only,
   hash-chained log of the raw text behind each decision
