@@ -29,7 +29,7 @@ Tools (all return JSON text):
     memory_status      counts, watermark, signing algorithm
     memory_audit       structural / content / authorization / ledger checks
     memory_quarantine  list entries waiting for a human decision
-    memory_review      accept or reject one quarantined entry
+    memory_review      reject one quarantined entry (acceptance stays host-only)
     memory_handoff     read or update the cursor used to resume a new session
 """
 
@@ -50,7 +50,7 @@ from .watermark import WATERMARK
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "four-layer-memory"
-SERVER_VERSION = "0.7.8"
+SERVER_VERSION = "0.7.9"
 
 
 def _root() -> Path:

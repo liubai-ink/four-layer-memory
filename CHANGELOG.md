@@ -2,6 +2,28 @@
 
 # Changelog
 
+## 0.7.9 - 2026-10-30
+
+### Documents now match the code (three stale claims fixed)
+
+An external review of the repository found three places where the documents
+described an older interface than the one that ships:
+
+- `START-HERE.md` said v0.7.7 and listed eleven MCP tools; it now says v0.7.9 and
+  twelve (`memory_record_outcome` was missing), and its MCP snippet passes
+  `--root` the way `docs/INTEGRATING.md` already did. The different default roots
+  are now spelled out: MCP falls back to `FOUR_LAYER_MEMORY_ROOT` and then
+  `.four-layer-memory`, while the CLI defaults to `.memory`.
+- `docs/INTEGRATING.md` said "eleven tools" and omitted `memory_record_outcome`.
+- `README.md` wrote `read_layers()` with no argument; the real signature is
+  `read_layers(layers, scope="", include_failed=False)`, so calling it bare is a
+  `TypeError`.
+- `four_layer_memory/mcp.py`'s module docstring said `memory_review` can
+  "accept or reject"; `tool_review` raises when `accept=true`. Acceptance is a
+  host action (`four-layer-memory approve`).
+
+No behaviour changed; the CLI, the library and the MCP tool set are the same.
+
 ## 0.7.8 - 2026-10-30
 
 ### Experience can be scored after use (R052)

@@ -8,9 +8,9 @@
 
 **Author**: liubai — project **liu bai**.
 **Provenance watermark**: `liu bai` (also embedded in exported state files).
-**Version**: 0.7.8.
+**Version**: 0.7.9.
 
-> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.8 is the current source release; it is the version the v0.4 review response refers to.
+> **Archived releases.** v0.5.0 is deposited on Zenodo: [10.5281/zenodo.23638826](https://doi.org/10.5281/zenodo.23638826) (concept DOI) — version DOI [10.5281/zenodo.23638827](https://zenodo.org/records/23638827). v0.7.9 is the current source release; it is the version the v0.4 review response refers to.
 
 ## Quickstart (three commands)
 
@@ -50,7 +50,8 @@ Then pick how your agent talks to it:
 - **Claims carry a validity window.** `Entry(valid_from=…, valid_to=…)` records
   *when* a fact is true. The store serves only claims true **now**: a window that
   has closed, or one that has not opened yet, is kept in the ledger and reported
-  by `read_layers()["historical"] / ["future"]`, reachable on demand with
+  by `read_layers(layers)["historical"] / ["future"]` (first argument is the list of
+  layers to read, e.g. `read_layers(["A", "B"])`), reachable on demand with
   `search(include_historical=True)`. Superseded facts are hidden, not deleted.
 - **The write path is measured, not asserted.** `python scripts/eval_memory.py`
   runs a local, offline, dependency-free battery over the three properties no
@@ -59,8 +60,8 @@ Then pick how your agent talks to it:
   of them regresses.
 - **Claims are merged on the write side.** `Entry(supersedes=<id>)` records that a
   newer claim replaces an older one. The old bullet stays in the layer file and in
-  the ledger, so the history stays readable, but `read_layers()` and `search()` stop
-  serving it, `read_layers()["superseded"]` names the replacement, and `audit`
+  the ledger, so the history stays readable, but `read_layers(layers)` and `search()` stop
+  serving it, `read_layers(layers)["superseded"]` names the replacement, and `audit`
   reports every chain. Revoking or expiring the replacement brings the old claim
   back. `add --noop --reason "..."` records the *decision not to write*: "I looked
   and there was nothing new" is a decision too.
@@ -85,7 +86,7 @@ Then pick how your agent talks to it:
 - **Experience can be scored after use.** An experience that worked gets copied
   next time — so does one that failed. `Entry(kind="experience")` marks a stored
   habit or procedure, `record_outcome([id], ok=False)` appends a verdict to the
-  ledger, and `read_layers()` / `search()` stop serving an experience whose latest
+  ledger, and `read_layers(layers)` / `search()` stop serving an experience whose latest
   verdict failed (`--include-failed` for audits). Facts cannot be scored: they are
   decided at the write path. `audit` reports unlabelled experience as debt
   (target 50%), not as an error.

@@ -86,7 +86,7 @@ ledger; you can read it with any editor.
 **From a clone without installing**: `command: "python"`, `args:
 ["-m", "four_layer_memory.mcp", "--root", "/path/to/memory"]`.
 
-Then the model can call eleven tools:
+Then the model can call twelve tools:
 
 | Tool | What it does |
 |---|---|
@@ -97,6 +97,7 @@ Then the model can call eleven tools:
 | `memory_audit` | structural / content / authorization / ledger checks |
 | `memory_quarantine` | list entries waiting for a human decision |
 | `memory_review` | **reject only** — acceptance is a host action (`four-layer-memory approve`) |
+| `memory_record_outcome` | score an experience after use; a failed verdict takes it out of the working set |
 | `memory_handoff`, `memory_recall` | read the cross-session cursor, or mark consolidation at a reference |
 | `memory_archive_search` | search the raw text behind past decisions (never injected) |
 | `memory_archive_verify` | recompute the archive hash chain and its coverage of served entries |

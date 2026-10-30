@@ -3,7 +3,7 @@
 这是一个**给长会话 AI 用的记忆底座**（Python，无第三方依赖）。
 它不教你"怎么让模型记住"，它管的是：**哪些内容配被写进记忆、谁有权写、写错能不能撤、事后能不能验。**
 
-- 版本：v0.7.7
+- 版本：v0.7.9
 - 包内不含任何作者本地路径、密钥或私人数据
 - 需要：Python 3.10 及以上；`cryptography` 只在你想用 Ed25519 签名时才需要（默认 HMAC）
 
@@ -60,13 +60,15 @@ Windows 上若 `python` 不在 PATH，可用 `py -3` 代替。
    {
      "mcpServers": {
        "four-layer-memory": {
-         "command": "python",
-         "args": ["-m", "four_layer_memory.mcp"]
+         "command": "four-layer-memory-mcp",
+         "args": ["--root", "/绝对路径/memory"]
        }
      }
    }
    ```
-   共 11 个工具：`memory_load` / `memory_add` / `memory_consolidate` / `memory_status` / `memory_audit` / `memory_quarantine` / `memory_review` / `memory_handoff` / `memory_recall` / `memory_archive_search` / `memory_archive_verify`。
+   共 12 个工具：`memory_load` / `memory_add` / `memory_consolidate` / `memory_status` / `memory_audit` / `memory_quarantine` / `memory_review` / `memory_record_outcome` / `memory_handoff` / `memory_recall` / `memory_archive_search` / `memory_archive_verify`。
+
+   > 没装成命令时写 `"command": "python"`、`"args": ["-m", "four_layer_memory.mcp", "--root", "/绝对路径/memory"]`。不给 `--root` 时，MCP 先读环境变量 `FOUR_LAYER_MEMORY_ROOT`，再退到相对目录 `.four-layer-memory`；而 CLI 的默认根是 `.memory`——两个默认根不同，混用会读错库。
 
 ---
 
