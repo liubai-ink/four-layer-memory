@@ -2,6 +2,36 @@
 
 # Changelog
 
+## 0.8.0 - 2026-10-31
+
+### `forget`: drop one entry, keep the tombstone
+
+`revoke()` works by source event and deliberately leaves the bullet in the
+layer file (the loader skips it), which is the right answer when the question
+is "who said this". It is the wrong answer for text that should not live in
+the file at all: an expired state block, a finished experiment, a draft that
+was replaced. Until now the only per-entry exit was editing the markdown by
+hand, which makes the file diverge from the ledger and fails `audit`.
+
+- `MemoryStore.forget(entry_id, reason="")` appends a `forget` tombstone to
+  the ledger, then rewrites the layer file from the ledger with that id
+  skipped. `expected_layers()` and `compact()` skip forgotten ids as well, so
+  the file stays a pure function of the ledger and the hash chain still
+  verifies.
+- `_servable()` never serves a forgotten entry again, and `forget` is
+  idempotent: the second call reports `already: true` and writes no event.
+- CLI: `four-layer-memory --root <root> forget <entry_id> --reason "expired"`.
+- Six tests in `tests/test_forget.py` cover the file rewrite, ledger
+  integrity, `expected_layers()` equality, idempotency, unknown ids, and the
+  CLI path (173 tests total).
+
+### Why not just revoke
+
+Revocation is a statement about provenance ("do not trust anything from this
+event"); forget is a statement about storage ("stop carrying this text").
+Keeping them separate means a store can be clean without pretending its
+history was different.
+
 ## 0.7.9 - 2026-10-30
 
 ### Documents now match the code (three stale claims fixed)

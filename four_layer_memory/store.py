@@ -505,9 +505,16 @@ class MemoryStore:
         records = records if records is not None else self.ledger_records()
         bound = {str(r.get("tx")) for r in records
                  if r.get("event") == "bind" and r.get("tx")}
+        # A forgotten entry keeps its write/approve record for replay, but the
+        # host dropped its text from the layer file: never serve it again.
+        forgotten = set()
+        for key, ids in self._forgotten_ids(records).items():
+            forgotten |= ids
         out: list[Entry] = []
         for rec in records:
             if rec.get("event") not in ("write", "approve"):
+                continue
+            if str(rec.get("entry_id") or "") in forgotten:
                 continue
             tx = str(rec.get("tx") or "")
             if tx and tx not in bound:  # half-committed: never served
@@ -1026,6 +1033,18 @@ class MemoryStore:
             out.setdefault(key, set()).update(str(x) for x in rec.get("dropped_ids") or [])
         return out
 
+    def _forgotten_ids(self, records: list[dict] | None = None) -> dict[str, set[str]]:
+        """Entry ids dropped on request through ``forget`` (tombstone in the ledger)."""
+        out: dict[str, set[str]] = {}
+        for rec in (records if records is not None else self.ledger_records()):
+            if rec.get("event") != "forget":
+                continue
+            if not rec.get("entry_id"):
+                continue
+            key = str(rec.get("layer", "")).upper()
+            out.setdefault(key, set()).add(str(rec.get("entry_id")))
+        return out
+
     def _layer_from_ledger(self, layer: Layer, records: list[dict],
                            skip_ids: set[str] | None = None) -> str:
         """Rebuild one layer file's bytes from its write/approve records."""
@@ -1052,8 +1071,12 @@ class MemoryStore:
         """
         records = self.ledger_records()
         dropped = self._dropped_ids(records)
+        forgotten = self._forgotten_ids(records)
         return {
-            layer.value: self._layer_from_ledger(layer, records, dropped.get(layer.value, set()))
+            layer.value: self._layer_from_ledger(
+                layer, records,
+                dropped.get(layer.value, set()) | forgotten.get(layer.value, set()),
+            )
             for layer in Layer
         }
 
@@ -1679,6 +1702,54 @@ class MemoryStore:
         return {"source_event_id": source_event_id, "revoked": sorted(hits),
                 "revoked_total": sorted(ids), "revoked_sources": sorted(sources)}
 
+    def forget(self, entry_id: str, reason: str = "") -> dict:
+        """Drop one entry from its layer file, keeping a tombstone in the ledger.
+
+        ``revoke`` works by *source event* and keeps the bullet in place (the
+        loader skips it).  ``forget`` is the per-entry counterpart: the bullet is
+        physically removed and a ``forget`` event records why, so ``expected_layers``
+        keeps matching the file and replay stays honest.  Use it for entries whose
+        text should no longer live in the layer file at all (expired state blocks,
+        superseded experiments), not as a way to hide a mistake: a revoked claim is
+        still the better answer when the question is "who said this".
+        """
+        with self._lock():
+            self._reload()
+            records = self.ledger_records()
+            rec = self._find_record(entry_id, records)
+            if rec is None:
+                raise StoreError(f"no entry {entry_id} in the ledger")
+            layer = str(rec.get("layer") or "").upper()
+            if layer not in {l.value for l in Layer}:
+                raise StoreError(f"unknown layer for entry {entry_id}: {layer!r}")
+            dropped = self._dropped_ids(records)
+            forgotten = self._forgotten_ids(records)
+            if entry_id in forgotten.get(layer, set()) or entry_id in dropped.get(layer, set()):
+                return {"entry_id": entry_id, "layer": layer, "already": True}
+            expected = self._layer_from_ledger(
+                Layer(layer), records,
+                dropped.get(layer, set()) | forgotten.get(layer, set()),
+            )
+            self._guard_bytes(layer, expected)
+            self._ledger({
+                "event": "forget",
+                "tx": secrets.token_hex(6),
+                "entry_id": entry_id,
+                "layer": layer,
+                "reason": reason or "forgotten by host",
+                "at": now_iso(),
+            })
+            records = self.ledger_records()
+            skip = (dropped.get(layer, set())
+                    | self._forgotten_ids(records).get(layer, set()))
+            path = self.path_for(layer)
+            self._backup(path)
+            self._atomic_write(path, self._layer_from_ledger(Layer(layer), records, skip))
+            self.state.layer_counts = self._physical_counts()
+            self._save_state()
+        return {"entry_id": entry_id, "layer": layer, "forgotten": True,
+                "reason": reason or "forgotten by host"}
+
     # -- recovery ----------------------------------------------------------
     def _recover_tx(self, rec: dict, records: list[dict] | None = None) -> dict:
         """Repair one write/approve transaction whose bind is missing (F03)."""
@@ -1771,11 +1842,13 @@ class MemoryStore:
             ids, sources = self.revoked_sets()
             records = self.ledger_records()
             already = self._dropped_ids(records)
+            forgotten = self._forgotten_ids(records)
             report: dict = {"applied": bool(apply), "layers": {}, "dropped": []}
             for layer in Layer:
                 if layer.value not in wanted:
                     continue
-                skip = set(already.get(layer.value, set()))
+                skip = set(already.get(layer.value, set())) | set(
+                    forgotten.get(layer.value, set()))
                 expected = self._layer_from_ledger(layer, records, skip)
                 path = self.path_for(layer)
                 current = path.read_text(encoding="utf-8") if path.exists() else self._header(layer)

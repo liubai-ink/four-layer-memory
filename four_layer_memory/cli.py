@@ -238,6 +238,13 @@ def cmd_revoke(args) -> int:
     return 0
 
 
+def cmd_forget(args) -> int:
+    store = MemoryStore(args.root)
+    print(json.dumps(store.forget(args.entry_id, reason=getattr(args, "reason", "") or ""),
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_archive_search(args) -> int:
     store = _store(args)
     hits = store.archive.search(args.query, limit=args.limit,
@@ -414,6 +421,10 @@ def main(argv: list[str] | None = None) -> int:
     rv = sub.add_parser("revoke")
     rv.add_argument("source_event")
 
+    fg = sub.add_parser("forget")
+    fg.add_argument("entry_id", help="entry id to physically drop from its layer file")
+    fg.add_argument("--reason", default="", help="why it is being dropped (kept in the ledger)")
+
     sub.add_parser("audit")
     ro = sub.add_parser("record-outcome")
     ro.add_argument("entry_id", nargs="+", help="one or more entry ids")
@@ -443,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         "triggers": cmd_triggers, "plan": cmd_plan, "handoff": cmd_handoff,
         "audit": cmd_audit, "export": cmd_export, "keygen": cmd_keygen,
         "quarantine": cmd_quarantine, "calibrate": cmd_calibrate,
-        "revoke": cmd_revoke, "demo": cmd_demo, "compact": cmd_compact,
+        "revoke": cmd_revoke, "forget": cmd_forget, "demo": cmd_demo, "compact": cmd_compact,
         "search": cmd_search,
         "record-outcome": cmd_record_outcome,
     }[args.cmd]

@@ -200,6 +200,7 @@ python -m four_layer_memory --root .memory add A "Always report the conclusion f
 python -m four_layer_memory --root .memory quarantine --list   # what was held back, and why
 python -m four_layer_memory --root .memory approve <entry_id>  # host-only promotion
 python -m four_layer_memory --root .memory revoke evt-7        # everything from one source event
+python -m four_layer_memory --root .memory forget <entry_id>     # drop one entry, keep a tombstone
 python -m four_layer_memory --root .memory consolidate --anchor m00042 --usage 0.41
 python -m four_layer_memory --root .memory audit
 ```

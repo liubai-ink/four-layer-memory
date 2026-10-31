@@ -50,7 +50,7 @@ from .watermark import WATERMARK
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "four-layer-memory"
-SERVER_VERSION = "0.7.9"
+SERVER_VERSION = "0.8.0"
 
 
 def _root() -> Path:

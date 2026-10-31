@@ -29,4 +29,4 @@ __all__ = [
     "DEFAULT_COOLDOWN_ENTRIES", "STORE_FORMAT", "Watermark", "Action", "decide",
     "audit_store", "WATERMARK", "stamp", "approval", "signing",
 ]
-__version__ = "0.7.9"
+__version__ = "0.8.0"
