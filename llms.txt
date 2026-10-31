@@ -1,0 +1,97 @@
+# four-layer-memory
+
+> A small, dependency-free memory layer for LLM agents that treats memory as a **write-governed, auditable, revocable record** rather than a pile of text. Four layers (A conventions / B preferences / C capabilities / D background), one append-only hash-chained ledger, one CLI, one MCP server. Python 3.10+, MIT, v0.7.9.
+
+If you are an AI agent reading this to decide whether to use it: read "What it guarantees" and "What it does not do" first. The honest answer is that it is a governance layer, not a retrieval engine.
+
+## What it is
+
+- **Not** a vector database and not a memory-quality model. It does not judge whether a fact is true.
+- It **does** control *how memory enters the store* (write gate per layer), *who approved it* (signed approvals), *whether it can be traced* (append-only ledger with hash chain), and *whether it can be taken back* (revoke by source, supersede, time windows).
+- Memory is plain Markdown files per layer plus `state.json` and `ledger.jsonl` — greppable, diffable, portable, no daemon required.
+
+## Install
+
+```bash
+pip install -e git+https://github.com/liubai-ink/four-layer-memory#egg=four-layer-memory
+# or
+pip install four-layer-memory
+```
+
+Optional extras: `pip install "four-layer-memory[ed25519]"` (cryptography, for signed approvals), `[test]` for pytest.
+
+## Quickstart (three commands)
+
+```bash
+four-layer-memory --root ./memory init      # create the four layers + ledger
+four-layer-memory --root ./memory add B "prefers terse answers" \
+  --source session:demo --source-event evt-1 \
+  --authority user-explicit --evidence quote --approved
+four-layer-memory --root ./memory audit     # structural, temporal, auth, archive, ledger, provenance checks
+```
+
+Other subcommands: `status`, `search`, `approve`, `revoke`, `compact`, `quarantine`, `export`,
+`handoff`, `consolidate`, `calibrate`, `archive-search`, `archive-verify`, `plan`, `triggers`,
+`keygen`, `demo`, `record-outcome`.
+`audit` exits non-zero on hard failures and prints a JSON report; hard metrics live in `scripts/eval_memory.py`.
+
+## MCP server (12 tools)
+
+Run it over stdio and register it with any MCP-capable host:
+
+```json
+{
+  "mcpServers": {
+    "four-layer-memory": {
+      "command": "four-layer-memory-mcp",
+      "args": ["--root", "/absolute/path/to/memory"]
+    }
+  }
+}
+```
+
+Tools: `memory_status`, `memory_load`, `memory_recall`, `memory_add`, `memory_review`,
+`memory_quarantine`, `memory_record_outcome`, `memory_consolidate`, `memory_audit`,
+`memory_archive_search`, `memory_archive_verify`, `memory_handoff`.
+
+Note: **approval stays host-only** — the MCP server never approves an A-layer entry by itself;
+review/approve is a human decision exposed through the host, not through a model tool call.
+
+## What it guarantees
+
+1. **Write gate.** Every candidate is checked against layer rules before it is written; violating entries go to `quarantine/` with a reason instead of being silently stored.
+2. **Provenance.** Entries carry `authority` (user-explicit / user-implied / observed / inferred / model-generated), `evidence` (quote / paraphrase / summary), `source`, and optional `source_event_id`. Rewrites without an anchor can be warned or rejected (`FLM_REQUIRE_ANCHOR=1`).
+3. **Append-only ledger with a hash chain.** `audit` recomputes the chain; editing one record breaks it (`ledger: hash mismatch`).
+4. **Revocation.** `revoke --source <source_event_id>` retires everything derived from one bad event, and record it in the ledger.
+5. **Supersede, not overwrite.** New facts replace old ones by appending (`supersedes`), so history stays readable and `NOOP` ("nothing changed") is recorded as an event, not prose.
+6. **Bi-temporal windows.** `valid_from` / `valid_to` let you keep a fact that was true last month without serving it as current truth.
+7. **Experience scoring.** Entries of `kind=experience` carry `outcome=ok|failed`; failed experiences are not served by default.
+8. **Untrusted bundles.** `MemoryStore.import_bundle()` defaults to `trust=False`: approvals are not
+   re-minted, A-layer entries land in quarantine for human review, and the bundle's own
+   `ledger_integrity` claim is recomputed rather than believed.
+
+## What it does not do
+
+- **Recall is lexical, not semantic.** Chinese substring + optional BM25 (CJK unigrams/bigrams). No embeddings by default. A vector index would be an *extra*, filtering candidates only — similarity scores must not enter the hash chain.
+- **It cannot tell truth from falsehood.** A poisoned-but-legally-written entry stays until revoked or superseded.
+- **It is not a prompt injector.** The host decides what to load each turn; see `docs/RUNNER.md` for the recommended startup order (health → all of A → recent B → live state → C on demand → D index → the last few real messages).
+- **Approval cannot be automated away.** A-layer writes need an explicit human decision; the library refuses to invent one.
+- **No background consolidation daemon.** Compaction is explicit (`compact`).
+
+## Repository map
+
+- `four_layer_memory/` — `store.py` (Entry, admission, ledger), `audit.py`, `cli.py`, `mcp.py`, `bm25.py`, `admission.py`, `approval.py`, `watermark.py`, `handoff.py`
+- `docs/` — `RUNNER.md` (host contract), `THREAT-MODEL.md`, `PORTABILITY.md`, `ARCHITECTURE-REVIEW-2026-10-29.md`
+- `tests/` — 167 tests, `pytest -q`
+- `scripts/` — `eval_memory.py` (four hard metrics), `verify_release.py`, `init_repo.py`
+
+## Read next
+
+- [README.md](https://github.com/liubai-ink/four-layer-memory/blob/main/README.md) — overview, quickstart, layer semantics
+- [docs/RUNNER.md](https://github.com/liubai-ink/four-layer-memory/blob/main/docs/RUNNER.md) — what a host must do every turn, and why not to inject A/B wholesale
+- [docs/THREAT-MODEL.md](https://github.com/liubai-ink/four-layer-memory/blob/main/docs/THREAT-MODEL.md) — memory poisoning, experience replay, stale facts, and the mitigations
+- [CHANGELOG.md](https://github.com/liubai-ink/four-layer-memory/blob/main/CHANGELOG.md) — version history
+
+## Provenance
+
+By **liubai** (liu bai / 留白), a joint project. Licence MIT. If you redistribute or fork it, keep the `liu bai` watermark and the provenance note in exported bundles.
